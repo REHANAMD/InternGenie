@@ -1,0 +1,981 @@
+"""Database Module - Handles SQLite database operations"""
+import sqlite3
+import json
+import hashlib
+from datetime import datetime
+from typing import List, Dict, Optional, Tuple
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class Database:
+    def __init__(self, db_path: str = "recommendation_engine.db"):
+        """Initialize database connection"""
+        self.db_path = db_path
+        self.init_db()
+    
+    def get_connection(self):
+        """Get database connection with sane defaults for concurrency"""
+        conn = sqlite3.connect(self.db_path, timeout=30, check_same_thread=False)
+        try:
+            conn.execute("PRAGMA busy_timeout = 30000")
+        except Exception:
+            pass
+        return conn
+    
+    def init_db(self):
+        """Initialize database tables"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        # Use WAL for better concurrent read/write behavior
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL;")
+        except Exception:
+            pass
+        
+        # Create candidates table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS candidates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                name TEXT NOT NULL,
+                education TEXT,
+                skills TEXT,
+                location TEXT,
+                experience_years INTEGER DEFAULT 0,
+                phone TEXT,
+                linkedin TEXT,
+                github TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Create internships table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS internships (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                company TEXT NOT NULL,
+                location TEXT NOT NULL,
+                description TEXT,
+                required_skills TEXT,
+                preferred_skills TEXT,
+                duration TEXT,
+                stipend TEXT,
+                application_deadline TEXT,
+                posted_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active BOOLEAN DEFAULT 1,
+                min_education TEXT,
+                experience_required INTEGER DEFAULT 0
+            )
+        ''')
+        # Add unique index to prevent exact duplicates by title + company + location
+        try:
+            cursor.execute('''
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_internships_unique
+                ON internships(title, company, location, description)
+            ''')
+        except Exception:
+            pass
+        
+        # Create applications table for tracking
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS applications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                candidate_id INTEGER,
+                internship_id INTEGER,
+                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                status TEXT DEFAULT 'pending',
+                FOREIGN KEY (candidate_id) REFERENCES candidates(id),
+                FOREIGN KEY (internship_id) REFERENCES internships(id)
+            )
+        ''')
+        
+        # Create recommendations table for caching
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS recommendations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                candidate_id INTEGER,
+                internship_id INTEGER,
+                score REAL,
+                explanation TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (candidate_id) REFERENCES candidates(id),
+                FOREIGN KEY (internship_id) REFERENCES internships(id)
+            )
+        ''')
+        
+        # Create saved_internships table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS saved_internships (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                candidate_id INTEGER NOT NULL,
+                internship_id INTEGER NOT NULL,
+                saved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(candidate_id, internship_id),
+                FOREIGN KEY (candidate_id) REFERENCES candidates(id),
+                FOREIGN KEY (internship_id) REFERENCES internships(id)
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+        
+        # Run cleanup and migration after table creation
+        self.run_cleanup_and_migration()
+        
+        logger.info("Database initialized successfully")
+    
+    def ensure_all_tables(self) -> List[str]:
+        """Ensure all expected tables exist; create missing ones. Returns list of created tables."""
+        expected_tables = {
+            'candidates': '''
+                CREATE TABLE IF NOT EXISTS candidates (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    education TEXT,
+                    skills TEXT,
+                    location TEXT,
+                    experience_years INTEGER DEFAULT 0,
+                    phone TEXT,
+                    linkedin TEXT,
+                    github TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''',
+            'internships': '''
+                CREATE TABLE IF NOT EXISTS internships (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    company TEXT NOT NULL,
+                    location TEXT NOT NULL,
+                    description TEXT,
+                    required_skills TEXT,
+                    preferred_skills TEXT,
+                    duration TEXT,
+                    stipend TEXT,
+                    application_deadline TEXT,
+                    posted_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    is_active BOOLEAN DEFAULT 1,
+                    min_education TEXT,
+                    experience_required INTEGER DEFAULT 0
+                )
+            ''',
+            'applications': '''
+                CREATE TABLE IF NOT EXISTS applications (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    candidate_id INTEGER,
+                    internship_id INTEGER,
+                    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    status TEXT DEFAULT 'pending',
+                    FOREIGN KEY (candidate_id) REFERENCES candidates(id),
+                    FOREIGN KEY (internship_id) REFERENCES internships(id)
+                )
+            ''',
+            'recommendations': '''
+                CREATE TABLE IF NOT EXISTS recommendations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    candidate_id INTEGER,
+                    internship_id INTEGER,
+                    score REAL,
+                    explanation TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (candidate_id) REFERENCES candidates(id),
+                    FOREIGN KEY (internship_id) REFERENCES internships(id)
+                )
+            ''',
+            'saved_internships': '''
+                CREATE TABLE IF NOT EXISTS saved_internships (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    candidate_id INTEGER NOT NULL,
+                    internship_id INTEGER NOT NULL,
+                    saved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(candidate_id, internship_id),
+                    FOREIGN KEY (candidate_id) REFERENCES candidates(id),
+                    FOREIGN KEY (internship_id) REFERENCES internships(id)
+                )
+            '''
+        }
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        existing = {row[0] for row in cursor.fetchall()}
+        created: List[str] = []
+        for name, ddl in expected_tables.items():
+            if name not in existing:
+                cursor.execute(ddl)
+                created.append(name)
+        conn.commit()
+        conn.close()
+        return created
+    
+    def seed_internships(self, json_path: str = "data/internships.json"):
+        """Seed internships from JSON file"""
+        import time
+        attempts = 3
+        while attempts > 0:
+            try:
+                with open(json_path, 'r') as f:
+                    internships = json.load(f)
+                
+                conn = self.get_connection()
+                cursor = conn.cursor()
+                
+                # Skip seeding if internships already exist
+                cursor.execute('SELECT COUNT(*) FROM internships')
+                count_before = cursor.fetchone()[0]
+                if count_before > 0:
+                    conn.close()
+                    logger.info("Internships already present, skipping seeding")
+                    return True
+
+                for internship in internships:
+                    cursor.execute('''
+                        INSERT OR IGNORE INTO internships 
+                        (title, company, location, description, required_skills, 
+                         preferred_skills, duration, stipend, min_education, experience_required)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        internship.get('title'),
+                        internship.get('company'),
+                        internship.get('location'),
+                        internship.get('description'),
+                        internship.get('required_skills'),
+                        internship.get('preferred_skills'),
+                        internship.get('duration'),
+                        internship.get('stipend'),
+                        internship.get('min_education', 'Bachelor'),
+                        internship.get('experience_required', 0)
+                    ))
+                
+                conn.commit()
+                conn.close()
+                logger.info(f"Seeded {len(internships)} internships")
+                return True
+            except sqlite3.OperationalError as e:
+                if 'database is locked' in str(e).lower() and attempts > 1:
+                    time.sleep(1)
+                    attempts -= 1
+                    continue
+                logger.error(f"Error seeding internships: {e}")
+                return False
+            except Exception as e:
+                logger.error(f"Error seeding internships: {e}")
+                return False
+    
+    def add_candidate(self, candidate_data: Dict) -> Optional[int]:
+        """Add a new candidate to database"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                INSERT INTO candidates 
+                (email, password_hash, name, education, skills, location, 
+                 experience_years, phone, linkedin, github)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                candidate_data['email'],
+                candidate_data['password_hash'],
+                candidate_data['name'],
+                candidate_data.get('education'),
+                candidate_data.get('skills'),
+                candidate_data.get('location'),
+                candidate_data.get('experience_years', 0),
+                candidate_data.get('phone'),
+                candidate_data.get('linkedin'),
+                candidate_data.get('github')
+            ))
+            
+            conn.commit()
+            candidate_id = cursor.lastrowid
+            conn.close()
+            logger.info(f"Added candidate {candidate_id}")
+            return candidate_id
+        except sqlite3.IntegrityError as e:
+            logger.error(f"Candidate already exists: {e}")
+            conn.close()
+            return None
+        except Exception as e:
+            logger.error(f"Error adding candidate: {e}")
+            conn.close()
+            return None
+    
+    def get_candidate(self, email: str = None, candidate_id: int = None) -> Optional[Dict]:
+        """Get candidate by email or ID"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        if email:
+            cursor.execute('SELECT * FROM candidates WHERE email = ?', (email,))
+        elif candidate_id:
+            cursor.execute('SELECT * FROM candidates WHERE id = ?', (candidate_id,))
+        else:
+            conn.close()
+            return None
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            columns = ['id', 'email', 'password_hash', 'name', 'education', 
+                      'skills', 'location', 'experience_years', 'phone', 
+                      'linkedin', 'github', 'created_at', 'updated_at']
+            return dict(zip(columns, row))
+        return None
+    
+    def update_candidate(self, candidate_id: int, update_data: Dict) -> bool:
+        """Update candidate information"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Build update query dynamically
+        update_fields = []
+        values = []
+        for key, value in update_data.items():
+            if key not in ['id', 'email', 'password_hash', 'created_at']:
+                update_fields.append(f"{key} = ?")
+                values.append(value)
+        
+        if not update_fields:
+            conn.close()
+            return False
+        
+        values.append(candidate_id)
+        query = f"UPDATE candidates SET {', '.join(update_fields)}, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+        
+        try:
+            logger.info(f"Executing query: {query}")
+            logger.info(f"With values: {values}")
+            cursor.execute(query, values)
+            conn.commit()
+            conn.close()
+            logger.info(f"Updated candidate {candidate_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error updating candidate: {e}")
+            conn.close()
+            return False
+    
+    def get_all_internships(self, active_only: bool = True) -> List[Dict]:
+        """Get all internships"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        if active_only:
+            cursor.execute('SELECT * FROM internships WHERE is_active = 1')
+        else:
+            cursor.execute('SELECT * FROM internships')
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        columns = ['id', 'title', 'company', 'location', 'description', 
+                  'required_skills', 'preferred_skills', 'duration', 'stipend',
+                  'application_deadline', 'posted_date', 'is_active', 
+                  'min_education', 'experience_required']
+        
+        return [dict(zip(columns, row)) for row in rows]
+    
+    def get_internship(self, internship_id: int) -> Optional[Dict]:
+        """Get specific internship by ID"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT * FROM internships WHERE id = ?', (internship_id,))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            columns = ['id', 'title', 'company', 'location', 'description', 
+                      'required_skills', 'preferred_skills', 'duration', 'stipend',
+                      'application_deadline', 'posted_date', 'is_active', 
+                      'min_education', 'experience_required']
+            return dict(zip(columns, row))
+        return None
+    
+    def save_recommendation(self, candidate_id: int, internship_id: int, 
+                           score: float, explanation: str):
+        """Save recommendation for caching"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                INSERT INTO recommendations 
+                (candidate_id, internship_id, score, explanation)
+                VALUES (?, ?, ?, ?)
+            ''', (candidate_id, internship_id, score, explanation))
+            
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            logger.error(f"Error saving recommendation: {e}")
+            conn.close()
+            return False
+    
+    def get_cached_recommendations(self, candidate_id: int, hours: int = 24) -> List[Dict]:
+        """Get cached recommendations within specified hours"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT r.*, i.title, i.company, i.location, i.description, 
+                   i.required_skills, i.preferred_skills, i.duration, i.stipend
+            FROM recommendations r
+            JOIN internships i ON r.internship_id = i.id
+            WHERE r.candidate_id = ? 
+            AND datetime(r.created_at) >= datetime('now', '-' || ? || ' hours')
+            ORDER BY r.score DESC
+        ''', (candidate_id, hours))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        columns = ['id', 'candidate_id', 'internship_id', 'score', 'explanation', 
+                  'created_at', 'title', 'company', 'location', 'description',
+                  'required_skills', 'preferred_skills', 'duration', 'stipend']
+        
+        return [dict(zip(columns, row)) for row in rows]
+    
+    def clear_old_recommendations(self, days: int = 7):
+        """Clear recommendations older than specified days"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            DELETE FROM recommendations 
+            WHERE datetime(created_at) < datetime('now', '-' || ? || ' days')
+        ''', (days,))
+        
+        conn.commit()
+        conn.close()
+        logger.info(f"Cleared recommendations older than {days} days")
+    
+    def clear_recommendations_for_candidate(self, candidate_id: int):
+        """Clear all cached recommendations for a specific candidate"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            DELETE FROM recommendations 
+            WHERE candidate_id = ?
+        ''', (candidate_id,))
+        
+        conn.commit()
+        conn.close()
+        logger.info(f"Cleared all recommendations for candidate {candidate_id}")
+    
+    # Application methods
+    def apply_for_internship(self, candidate_id: int, internship_id: int) -> bool:
+        """Apply for an internship"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Check if already applied with non-withdrawn status
+            cursor.execute('''
+                SELECT id, status FROM applications 
+                WHERE candidate_id = ? AND internship_id = ?
+            ''', (candidate_id, internship_id))
+            
+            result = cursor.fetchone()
+            if result:
+                status = result[1]
+                if status != 'withdrawn':
+                    logger.info(f"Candidate {candidate_id} already applied for internship {internship_id} with status {status}")
+                    return False
+                else:
+                    # Update withdrawn application to pending
+                    cursor.execute('''
+                        UPDATE applications 
+                        SET status = 'pending', applied_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                    ''', (result[0],))
+                    conn.commit()
+                    logger.info(f"Candidate {candidate_id} re-applied for withdrawn internship {internship_id}")
+                    return True
+            
+            # Insert new application
+            cursor.execute('''
+                INSERT INTO applications (candidate_id, internship_id, status)
+                VALUES (?, ?, 'pending')
+            ''', (candidate_id, internship_id))
+            
+            conn.commit()
+            logger.info(f"Candidate {candidate_id} applied for internship {internship_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error applying for internship: {e}")
+            return False
+        finally:
+            conn.close()
+    
+    def get_applications(self, candidate_id: int) -> List[Dict]:
+        """Get all applications for a candidate"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                SELECT a.*, i.title, i.company, i.location, i.description, 
+                       i.required_skills, i.preferred_skills, i.duration, i.stipend
+                FROM applications a
+                JOIN internships i ON a.internship_id = i.id
+                WHERE a.candidate_id = ?
+                ORDER BY a.applied_at DESC
+            ''', (candidate_id,))
+            
+            columns = [description[0] for description in cursor.description]
+            applications = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            
+            return applications
+            
+        except Exception as e:
+            logger.error(f"Error fetching applications: {e}")
+            return []
+        finally:
+            conn.close()
+    
+    def update_application_status(self, application_id: int, status: str) -> bool:
+        """Update application status (accepted, withdrawn, etc.)"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                UPDATE applications 
+                SET status = ?
+                WHERE id = ?
+            ''', (status, application_id))
+            
+            if cursor.rowcount > 0:
+                conn.commit()
+                logger.info(f"Updated application {application_id} status to {status}")
+                return True
+            else:
+                logger.warning(f"Application {application_id} not found")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error updating application status: {e}")
+            return False
+        finally:
+            conn.close()
+    
+    def is_internship_applied(self, candidate_id: int, internship_id: int) -> bool:
+        """Check if candidate has already applied for an internship (excluding withdrawn)"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                SELECT id FROM applications 
+                WHERE candidate_id = ? AND internship_id = ? AND status != 'withdrawn'
+            ''', (candidate_id, internship_id))
+            
+            return cursor.fetchone() is not None
+            
+        except Exception as e:
+            logger.error(f"Error checking application status: {e}")
+            return False
+        finally:
+            conn.close()
+    
+    def is_internship_accepted(self, candidate_id: int, internship_id: int) -> bool:
+        """Check if candidate has accepted an internship (should not appear in recommendations)"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                SELECT id FROM applications 
+                WHERE candidate_id = ? AND internship_id = ? AND status = 'accepted'
+            ''', (candidate_id, internship_id))
+            
+            return cursor.fetchone() is not None
+            
+        except Exception as e:
+            logger.error(f"Error checking accepted status: {e}")
+            return False
+        finally:
+            conn.close()
+    
+    def get_application_details(self, application_id: int) -> Optional[Dict]:
+        """Get detailed application information including timestamps"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                SELECT a.*, i.title, i.company, i.location, i.description, 
+                       i.required_skills, i.preferred_skills, i.duration, i.stipend
+                FROM applications a
+                JOIN internships i ON a.internship_id = i.id
+                WHERE a.id = ?
+            ''', (application_id,))
+            
+            row = cursor.fetchone()
+            if row:
+                columns = [description[0] for description in cursor.description]
+                return dict(zip(columns, row))
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error fetching application details: {e}")
+            return None
+        finally:
+            conn.close()
+    
+    def delete_application(self, application_id: int) -> bool:
+        """Delete an application (for withdrawn applications that should return to recommendations)"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                DELETE FROM applications 
+                WHERE id = ?
+            ''', (application_id,))
+            
+            if cursor.rowcount > 0:
+                conn.commit()
+                logger.info(f"Deleted application {application_id}")
+                return True
+            else:
+                logger.warning(f"Application {application_id} not found")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error deleting application: {e}")
+            return False
+        finally:
+            conn.close()
+    
+    def save_internship(self, candidate_id: int, internship_id: int) -> bool:
+        """Save an internship to user's saved list"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                INSERT INTO saved_internships (candidate_id, internship_id)
+                VALUES (?, ?)
+            ''', (candidate_id, internship_id))
+            
+            conn.commit()
+            conn.close()
+            logger.info(f"Saved internship {internship_id} for candidate {candidate_id}")
+            return True
+        except sqlite3.IntegrityError:
+            # Already saved
+            conn.close()
+            return False
+        except Exception as e:
+            logger.error(f"Error saving internship: {e}")
+            conn.close()
+            return False
+    
+    def unsave_internship(self, candidate_id: int, internship_id: int) -> bool:
+        """Remove internship from user's saved list"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                DELETE FROM saved_internships 
+                WHERE candidate_id = ? AND internship_id = ?
+            ''', (candidate_id, internship_id))
+            
+            conn.commit()
+            rows_affected = cursor.rowcount
+            conn.close()
+            
+            if rows_affected > 0:
+                logger.info(f"Unsaved internship {internship_id} for candidate {candidate_id}")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Error unsaving internship: {e}")
+            conn.close()
+            return False
+    
+    def get_saved_internships(self, candidate_id: int) -> List[Dict]:
+        """Get all saved internships for a candidate"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT i.*, s.saved_at,
+                   CASE WHEN s.id IS NOT NULL THEN 1 ELSE 0 END as is_saved
+            FROM saved_internships s
+            JOIN internships i ON s.internship_id = i.id
+            WHERE s.candidate_id = ?
+            ORDER BY s.saved_at DESC
+        ''', (candidate_id,))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        columns = ['id', 'title', 'company', 'location', 'description', 
+                  'required_skills', 'preferred_skills', 'duration', 'stipend',
+                  'application_deadline', 'posted_date', 'is_active', 
+                  'min_education', 'experience_required', 'saved_at', 'is_saved']
+        
+        return [dict(zip(columns, row)) for row in rows]
+    
+    def is_internship_saved(self, candidate_id: int, internship_id: int) -> bool:
+        """Check if an internship is saved by user"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT COUNT(*) FROM saved_internships 
+            WHERE candidate_id = ? AND internship_id = ?
+        ''', (candidate_id, internship_id))
+        
+        count = cursor.fetchone()[0]
+        conn.close()
+        
+        return count > 0
+
+    def remove_duplicate_internships(self) -> int:
+        """Remove duplicate internships by title+company+location+description, keeping the first occurrence. Returns number removed."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT title, company, location, description, COUNT(*) as cnt
+            FROM internships
+            GROUP BY title, company, location, description
+            HAVING COUNT(*) > 1
+        ''')
+        duplicates = cursor.fetchall()
+        if not duplicates:
+            logger.info("No duplicate internships found")
+            conn.close()
+            return 0
+        removed = 0
+        for title, company, location, description, cnt in duplicates:
+            cursor.execute('''
+                DELETE FROM internships
+                WHERE rowid NOT IN (
+                    SELECT MIN(rowid) FROM internships 
+                    WHERE title = ? AND company = ? AND location = ? AND description = ?
+                ) AND title = ? AND company = ? AND location = ? AND description = ?
+            ''', (title, company, location, description, title, company, location, description))
+            removed += cnt - 1
+        conn.commit()
+        conn.close()
+        logger.info(f"Removed {removed} duplicate internships")
+        return removed
+
+    def get_internship_stats(self) -> Dict[str, Dict]:
+        """Get aggregate statistics about internships in the database."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        stats: Dict[str, Dict] = {}
+        cursor.execute("SELECT COUNT(*) FROM internships")
+        stats['total'] = cursor.fetchone()[0]
+        cursor.execute('''
+            SELECT location, COUNT(*)
+            FROM internships
+            GROUP BY location
+        ''')
+        stats['by_location'] = dict(cursor.fetchall())
+        cursor.execute('''
+            SELECT company, COUNT(*)
+            FROM internships
+            GROUP BY company
+        ''')
+        stats['by_company'] = dict(cursor.fetchall())
+        cursor.execute('''
+            SELECT COUNT(*) FROM (
+                SELECT title, company
+                FROM internships
+                GROUP BY title, company
+                HAVING COUNT(*) > 1
+            )
+        ''')
+        stats['duplicate_groups'] = cursor.fetchone()[0]
+        conn.close()
+        return stats
+
+    def clear_duplicate_applications(self, candidate_id: int) -> int:
+        """Clear duplicate applications for a candidate, keeping only the most recent one for each internship"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Find duplicate applications (same candidate + internship)
+            cursor.execute('''
+                SELECT internship_id, COUNT(*) as count
+                FROM applications 
+                WHERE candidate_id = ? AND status != 'withdrawn'
+                GROUP BY internship_id
+                HAVING COUNT(*) > 1
+            ''', (candidate_id,))
+            
+            duplicates = cursor.fetchall()
+            total_removed = 0
+            
+            for internship_id, count in duplicates:
+                # Keep the most recent application, delete others
+                cursor.execute('''
+                    DELETE FROM applications 
+                    WHERE candidate_id = ? AND internship_id = ? AND status != 'withdrawn'
+                    AND id NOT IN (
+                        SELECT id FROM applications 
+                        WHERE candidate_id = ? AND internship_id = ? AND status != 'withdrawn'
+                        ORDER BY applied_at DESC 
+                        LIMIT 1
+                    )
+                ''', (candidate_id, internship_id, candidate_id, internship_id))
+                
+                removed = cursor.rowcount
+                total_removed += removed
+                logger.info(f"Removed {removed} duplicate applications for internship {internship_id}")
+            
+            if total_removed > 0:
+                conn.commit()
+                logger.info(f"Cleared {total_removed} duplicate applications for candidate {candidate_id}")
+            
+            return total_removed
+            
+        except Exception as e:
+            logger.error(f"Error clearing duplicate applications: {e}")
+            return 0
+        finally:
+            conn.close()
+
+    def get_application_by_internship(self, candidate_id: int, internship_id: int) -> Optional[Dict]:
+        """Get application details by candidate and internship ID"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT id, status, applied_at, created_at
+                FROM applications 
+                WHERE candidate_id = ? AND internship_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+            ''', (candidate_id, internship_id))
+            
+            result = cursor.fetchone()
+            if result:
+                return {
+                    'id': result[0],
+                    'status': result[1],
+                    'applied_at': result[2],
+                    'created_at': result[3]
+                }
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting application by internship: {e}")
+            return None
+        finally:
+            conn.close()
+
+    def delete_candidate_and_data(self, candidate_id: int) -> bool:
+        """Delete candidate and all related data permanently"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Start transaction
+            cursor.execute("BEGIN TRANSACTION")
+            
+            try:
+                # Delete from applications table
+                cursor.execute("DELETE FROM applications WHERE candidate_id = ?", (candidate_id,))
+                applications_deleted = cursor.rowcount
+                logger.info(f"Deleted {applications_deleted} applications for candidate {candidate_id}")
+                
+                # Delete from saved_internships table
+                cursor.execute("DELETE FROM saved_internships WHERE candidate_id = ?", (candidate_id,))
+                saved_deleted = cursor.rowcount
+                logger.info(f"Deleted {saved_deleted} saved internships for candidate {candidate_id}")
+                
+                # Delete from recommendations_cache table (if it exists)
+                try:
+                    cursor.execute("DELETE FROM recommendations_cache WHERE candidate_id = ?", (candidate_id,))
+                    cache_deleted = cursor.rowcount
+                    logger.info(f"Deleted {cache_deleted} cached recommendations for candidate {candidate_id}")
+                except Exception as e:
+                    logger.warning(f"Recommendations cache table not found or error deleting: {e}")
+                    cache_deleted = 0
+                
+                # Delete from candidates table
+                cursor.execute("DELETE FROM candidates WHERE id = ?", (candidate_id,))
+                candidate_deleted = cursor.rowcount
+                logger.info(f"Deleted candidate {candidate_id}")
+                
+                if candidate_deleted == 0:
+                    logger.warning(f"Candidate {candidate_id} not found for deletion")
+                    cursor.execute("ROLLBACK")
+                    return False
+                
+                # Commit transaction
+                cursor.execute("COMMIT")
+                conn.commit()
+                
+                logger.info(f"Successfully deleted candidate {candidate_id} and all related data")
+                return True
+                
+            except Exception as e:
+                logger.error(f"Error during deletion transaction: {e}")
+                cursor.execute("ROLLBACK")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error deleting candidate and data: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def run_cleanup_and_migration(self):
+        """Run cleanup and migration tasks automatically"""
+        try:
+            # Remove duplicates based on title + company + location + description
+            removed = self.remove_duplicate_internships()
+            if removed > 0:
+                logger.info(f"Cleaned up {removed} duplicate internships")
+            
+            # Ensure all tables exist (migration)
+            missing = self.ensure_all_tables()
+            if missing:
+                logger.info(f"Created missing tables: {missing}")
+                
+        except Exception as e:
+            logger.error(f"Error during cleanup/migration: {e}")
+
+# Initialize database on module import
+if __name__ == "__main__":
+    db = Database()
+    
+    # Ensure all tables exist
+    missing = db.ensure_all_tables()
+    if missing:
+        print(f"Created missing tables: {missing}")
+    
+    print("Database initialized successfully with all tables:")
+    
+    # List all tables
+    conn = db.get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+    tables = cursor.fetchall()
+    for table in tables:
+        cursor.execute(f"SELECT COUNT(*) FROM {table[0]}")
+        count = cursor.fetchone()[0]
+        print(f"  - {table[0]}: {count} records")
+    conn.close()
