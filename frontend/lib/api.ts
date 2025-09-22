@@ -155,6 +155,10 @@ export interface Application {
 export interface ApplicationsResponse {
   success: boolean;
   count: number;
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
   applications: Application[];
 }
 
@@ -256,8 +260,16 @@ export const applicationAPI = {
     return response.data;
   },
 
-  getAll: async (): Promise<ApplicationsResponse> => {
-    const response = await apiClient.get('/applications');
+  getAll: async (limit = 20, offset = 0, status?: string, search?: string): Promise<ApplicationsResponse> => {
+    const params = new URLSearchParams({
+      limit: limit.toString(),
+      offset: offset.toString(),
+    });
+    
+    if (status) params.append('status', status);
+    if (search) params.append('search', search);
+    
+    const response = await apiClient.get(`/applications?${params.toString()}`);
     return response.data;
   },
 

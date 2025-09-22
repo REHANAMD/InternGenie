@@ -674,15 +674,45 @@ async def apply_for_internship(
 
 @app.get("/applications")
 async def get_applications(
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    limit: int = 20,
+    offset: int = 0,
+    status: Optional[str] = None,
+    search: Optional[str] = None
 ):
-    """Get all applications for the current user"""
+    """Get applications for the current user with pagination and filtering"""
     try:
-        applications = db.get_applications(current_user['id'])
+        # Validate status filter
+        valid_statuses = ['pending', 'accepted', 'withdrawn', 'rejected']
+        if status and status not in valid_statuses:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid status filter. Must be one of: {valid_statuses}"
+            )
+        
+        # Get applications with filters
+        applications = db.get_applications(
+            current_user['id'],
+            limit=limit,
+            offset=offset,
+            status=status,
+            search=search
+        )
+        
+        # Get total count for pagination
+        total_count = db.get_applications_count(
+            current_user['id'],
+            status=status,
+            search=search
+        )
         
         return {
             "success": True,
             "count": len(applications),
+            "total": total_count,
+            "limit": limit,
+            "offset": offset,
+            "has_more": (offset + limit) < total_count,
             "applications": applications
         }
     

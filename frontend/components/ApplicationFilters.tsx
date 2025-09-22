@@ -6,7 +6,7 @@ import { Button, Card, CardContent } from '@/components/ui'
 import { Filter, X, Check } from 'lucide-react'
 
 interface ApplicationFiltersProps {
-  onApplyFilters: (filters: string[]) => void
+  onApplyFilters: (filters: string[] | string) => void
   isOpen: boolean
   onToggle: () => void
   totalCount: number
@@ -47,13 +47,19 @@ export default function ApplicationFilters({
   }
 
   const handleApply = () => {
-    onApplyFilters(selectedFilters)
+    // For backward compatibility, pass the first selected filter as a string
+    // or the array if multiple filters are supported
+    if (selectedFilters.length === 1) {
+      onApplyFilters(selectedFilters[0])
+    } else {
+      onApplyFilters(selectedFilters)
+    }
     onToggle()
   }
 
   const handleReset = () => {
     setSelectedFilters(['All'])
-    onApplyFilters(['All'])
+    onApplyFilters('All')
   }
 
   if (!isOpen) {

@@ -1,68 +1,70 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'react-hot-toast'
 import { motion, AnimatePresence } from 'framer-motion'
 import Navbar from '@/components/Navbar'
 import ApplicationFilters from '@/components/ApplicationFilters'
-import { Button, Card, CardContent, LoadingSpinner, Badge } from '@/components/ui'
+import ApplicationCard from '@/components/ApplicationCard'
+import Pagination from '@/components/Pagination'
+import SearchBar from '@/components/SearchBar'
+import VirtualizedApplicationList from '@/components/VirtualizedApplicationList'
+import InfiniteScrollApplicationList from '@/components/InfiniteScrollApplicationList'
+import { Button, LoadingSpinner } from '@/components/ui'
 import { useAuth } from '@/lib/auth'
 import { applicationAPI, Application } from '@/lib/api'
-import { formatStipend } from '@/lib/utils'
 import { 
   ArrowLeft,
-  CheckCircle,
-  XCircle,
-  Clock,
-  MapPin,
-  Building,
-  Calendar,
-  DollarSign,
   FileText,
   PartyPopper,
-  Filter
+  Filter,
+  List,
+  Grid
 } from 'lucide-react'
 
 export default function ApplicationsPage() {
   const router = useRouter()
   const { user, authenticated } = useAuth()
   const [applications, setApplications] = useState<Application[]>([])
-  const [filteredApplications, setFilteredApplications] = useState<Application[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [showCelebration, setShowCelebration] = useState(false)
   const [isFilterOpen, setIsFilterOpen] = useState(false)
   const [activeFilters, setActiveFilters] = useState<string[]>(['All'])
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(1)
+  const [totalItems, setTotalItems] = useState(0)
+  const [hasNextPage, setHasNextPage] = useState(false)
+  const [hasPrevPage, setHasPrevPage] = useState(false)
+  
+  // Search and filter state
+  const [searchQuery, setSearchQuery] = useState('')
+  const [currentStatus, setCurrentStatus] = useState<string | undefined>(undefined)
+  
+  // View mode state
+  const [viewMode, setViewMode] = useState<'grid' | 'virtualized' | 'infinite'>('grid')
+  
+  // Infinite scroll state
+  const [allApplications, setAllApplications] = useState<Application[]>([])
+  const [infiniteLoading, setInfiniteLoading] = useState(false)
+  
+  const ITEMS_PER_PAGE = 10
 
-  const formatApplicationDate = (dateString: string) => {
-    const date = new Date(dateString)
-    return date.toLocaleDateString('en-IN', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      timeZone: 'Asia/Kolkata'
-    })
-  }
-
-  useEffect(() => {
-    if (!authenticated) {
-      router.push('/')
-      return
-    }
-
-    fetchApplications()
-  }, [authenticated, router])
-
-  const fetchApplications = async () => {
+  const fetchApplications = useCallback(async (page = 1, status?: string, search?: string) => {
     setIsLoading(true)
     try {
-      const result = await applicationAPI.getAll()
+      const offset = (page - 1) * ITEMS_PER_PAGE
+      const result = await applicationAPI.getAll(ITEMS_PER_PAGE, offset, status, search)
       
       if (result.success) {
         setApplications(result.applications)
-        setFilteredApplications(result.applications)
+        setTotalItems(result.total)
+        setTotalPages(Math.ceil(result.total / ITEMS_PER_PAGE))
+        setHasNextPage(result.has_more)
+        setHasPrevPage(page > 1)
+        setCurrentPage(page)
       } else {
         toast.error('Failed to fetch applications')
       }
@@ -72,7 +74,80 @@ export default function ApplicationsPage() {
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [ITEMS_PER_PAGE])
+
+  const handlePageChange = useCallback((page: number) => {
+    fetchApplications(page, currentStatus, searchQuery)
+  }, [fetchApplications, currentStatus, searchQuery])
+
+  const handleSearch = useCallback((query: string) => {
+    setSearchQuery(query)
+    setCurrentPage(1)
+    fetchApplications(1, currentStatus, query)
+  }, [fetchApplications, currentStatus])
+
+  const handleStatusFilter = useCallback((status: string | string[]) => {
+    const statusValue = Array.isArray(status) ? status[0] : status
+    setCurrentStatus(statusValue === 'All' ? undefined : statusValue)
+    setCurrentPage(1)
+    if (viewMode === 'infinite') {
+      setAllApplications([])
+      fetchInfiniteApplications(1, statusValue === 'All' ? undefined : statusValue, searchQuery)
+    } else {
+      fetchApplications(1, statusValue === 'All' ? undefined : statusValue, searchQuery)
+    }
+  }, [fetchApplications, searchQuery, viewMode])
+
+  const fetchInfiniteApplications = useCallback(async (page = 1, status?: string, search?: string, append = false) => {
+    setInfiniteLoading(true)
+    try {
+      const offset = (page - 1) * ITEMS_PER_PAGE
+      const result = await applicationAPI.getAll(ITEMS_PER_PAGE, offset, status, search)
+      
+      if (result.success) {
+        if (append) {
+          setAllApplications(prev => [...prev, ...result.applications])
+        } else {
+          setAllApplications(result.applications)
+        }
+        setTotalItems(result.total)
+        setHasNextPage(result.has_more)
+      } else {
+        toast.error('Failed to fetch applications')
+      }
+    } catch (error) {
+      console.error('Error fetching applications:', error)
+      toast.error('Failed to fetch applications')
+    } finally {
+      setInfiniteLoading(false)
+    }
+  }, [ITEMS_PER_PAGE])
+
+  const handleLoadMore = useCallback(() => {
+    if (!infiniteLoading && hasNextPage) {
+      const nextPage = Math.floor(allApplications.length / ITEMS_PER_PAGE) + 1
+      fetchInfiniteApplications(nextPage, currentStatus, searchQuery, true)
+    }
+  }, [infiniteLoading, hasNextPage, allApplications.length, fetchInfiniteApplications, currentStatus, searchQuery])
+
+  const handleInfiniteSearch = useCallback((query: string) => {
+    setSearchQuery(query)
+    setAllApplications([])
+    fetchInfiniteApplications(1, currentStatus, query)
+  }, [fetchInfiniteApplications, currentStatus])
+
+  useEffect(() => {
+    if (!authenticated) {
+      router.push('/')
+      return
+    }
+
+    if (viewMode === 'infinite') {
+      fetchInfiniteApplications()
+    } else {
+      fetchApplications()
+    }
+  }, [authenticated, router, viewMode, fetchApplications, fetchInfiniteApplications])
 
   const handleStatusUpdate = async (applicationId: number, status: 'accepted' | 'withdrawn') => {
     try {
@@ -81,22 +156,8 @@ export default function ApplicationsPage() {
         const result = await applicationAPI.withdraw(applicationId)
         
         if (result.success) {
-          // Update local state to show withdrawn status
-          const updatedApplications = applications.map(app => 
-            app.id === applicationId 
-              ? { ...app, status: 'withdrawn' as const }
-              : app
-          )
-          setApplications(updatedApplications)
-          
-          // Also update filtered applications to reflect the change immediately
-          setFilteredApplications(prev => 
-            prev.map(app => 
-              app.id === applicationId 
-                ? { ...app, status: 'withdrawn' as const }
-                : app
-            )
-          )
+          // Refresh the current page to show updated data
+          fetchApplications(currentPage, currentStatus, searchQuery)
           
           toast.success('Application withdrawn successfully! It will appear in recommendations again.')
           
@@ -114,22 +175,8 @@ export default function ApplicationsPage() {
         const result = await applicationAPI.updateStatus(applicationId, status)
         
         if (result.success) {
-          // Update local state
-          const updatedApplications = applications.map(app => 
-            app.id === applicationId 
-              ? { ...app, status: status as 'accepted' | 'rejected' }
-              : app
-          )
-          setApplications(updatedApplications)
-          
-          // Also update filtered applications to reflect the change immediately
-          setFilteredApplications(prev => 
-            prev.map(app => 
-              app.id === applicationId 
-                ? { ...app, status: status as 'accepted' | 'rejected' }
-                : app
-            )
-          )
+          // Refresh the current page to show updated data
+          fetchApplications(currentPage, currentStatus, searchQuery)
 
           setShowCelebration(true)
           toast.success('Congratulations! We wish you a great and prosperous career ahead! 🎉')
@@ -151,43 +198,17 @@ export default function ApplicationsPage() {
     }
   }
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'accepted':
-        return <Badge className="bg-green-100 text-green-800 border-green-200">Accepted</Badge>
-      case 'withdrawn':
-        return <Badge className="bg-red-100 text-red-800 border-red-200">Withdrawn</Badge>
-      case 'rejected':
-        return <Badge className="bg-gray-100 text-gray-800 border-gray-200">Rejected</Badge>
-      default:
-        return <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200">Pending</Badge>
-    }
-  }
-
-  const handleApplyFilters = (filters: string[]) => {
-    setActiveFilters(filters)
-    
-    if (filters.includes('All')) {
-      setFilteredApplications(applications)
-    } else {
-      const filtered = applications.filter(application => {
-        return filters.includes(application.status)
-      })
-      setFilteredApplications(filtered)
-    }
-  }
-
   const toggleFilter = () => {
     setIsFilterOpen(!isFilterOpen)
   }
 
   const getFilterCounts = () => {
-    const acceptedCount = applications.filter(app => app.status === 'accepted').length
-    const withdrawnCount = applications.filter(app => app.status === 'withdrawn').length
+    // For now, we'll use the total items from the API response
+    // In a real app, you might want to fetch counts separately
     return {
-      total: applications.length,
-      accepted: acceptedCount,
-      withdrawn: withdrawnCount
+      total: totalItems,
+      accepted: 0, // Would need separate API call for accurate counts
+      withdrawn: 0
     }
   }
 
@@ -207,7 +228,7 @@ export default function ApplicationsPage() {
       
       {/* Sidebar Filter */}
       <ApplicationFilters
-        onApplyFilters={handleApplyFilters}
+        onApplyFilters={handleStatusFilter}
         isOpen={isFilterOpen}
         onToggle={toggleFilter}
         totalCount={counts.total}
@@ -251,14 +272,51 @@ export default function ApplicationsPage() {
                 Track your internship applications and their status
               </p>
             </div>
-            <Button
-              onClick={toggleFilter}
-              variant="outline"
-              className="bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700"
-            >
-              <Filter className="h-4 w-4 mr-2" />
-              Filter
-            </Button>
+            <div className="flex items-center space-x-3">
+              <Button
+                onClick={toggleFilter}
+                variant="outline"
+                className="bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700"
+              >
+                <Filter className="h-4 w-4 mr-2" />
+                Filter
+              </Button>
+              <div className="flex items-center space-x-1 border border-gray-300 rounded-md">
+                <Button
+                  onClick={() => setViewMode('grid')}
+                  variant={viewMode === 'grid' ? 'default' : 'ghost'}
+                  className="px-3 py-2"
+                  title="Grid View"
+                >
+                  <Grid className="h-4 w-4" />
+                </Button>
+                <Button
+                  onClick={() => setViewMode('virtualized')}
+                  variant={viewMode === 'virtualized' ? 'default' : 'ghost'}
+                  className="px-3 py-2"
+                  title="Virtualized List"
+                >
+                  <List className="h-4 w-4" />
+                </Button>
+                <Button
+                  onClick={() => setViewMode('infinite')}
+                  variant={viewMode === 'infinite' ? 'default' : 'ghost'}
+                  className="px-3 py-2"
+                  title="Infinite Scroll"
+                >
+                  <List className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </div>
+          
+          {/* Search Bar */}
+          <div className="mt-6">
+            <SearchBar
+              onSearch={viewMode === 'infinite' ? handleInfiniteSearch : handleSearch}
+              placeholder="Search applications by title, company, location, or skills..."
+              className="max-w-md"
+            />
           </div>
         </motion.div>
 
@@ -273,131 +331,61 @@ export default function ApplicationsPage() {
               <LoadingSpinner size="lg" />
               <p className="mt-4 text-gray-600">Loading your applications...</p>
             </div>
-          ) : filteredApplications.length > 0 ? (
-            <div className="space-y-6">
-              {filteredApplications.map((application, index) => (
-                <motion.div
-                  key={application.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.4, delay: index * 0.1 }}
-                >
-                  <Card className="hover:shadow-lg transition-all duration-300">
-                    <CardContent className="p-6">
-                      <div className="flex items-start justify-between mb-4">
-                        <div className="flex-1">
-                          <div className="flex items-center space-x-3 mb-2">
-                            <h3 className="text-xl font-semibold text-gray-900 dark:text-white">
-                              {application.title}
-                            </h3>
-                            {getStatusBadge(application.status)}
-                          </div>
-                          
-                          <div className="flex items-center space-x-4 text-sm text-gray-600 dark:text-gray-400 mb-3">
-                            <div className="flex items-center space-x-1">
-                              <Building className="h-4 w-4" />
-                              <span className="font-medium">{application.company}</span>
-                            </div>
-                            
-                            <div className="flex items-center space-x-1">
-                              <MapPin className="h-4 w-4" />
-                              <span>{application.location}</span>
-                            </div>
-                            
-                            <div className="flex items-center space-x-1">
-                              <Calendar className="h-4 w-4" />
-                              <span>{application.duration}</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Stipend */}
-                      <div className="flex items-center space-x-1 mb-4 p-3 bg-green-50 rounded-lg">
-                        <DollarSign className="h-4 w-4 text-green-600" />
-                        <span className="font-medium text-green-800">
-                          {formatStipend(application.stipend)}
-                        </span>
-                      </div>
-
-                      {/* Application Details */}
-                      <div className="grid md:grid-cols-2 gap-4 mb-4">
-                        <div>
-                          <h4 className="text-sm font-medium text-gray-700 mb-2">Applied On</h4>
-                          <p className="text-sm text-gray-600">
-                            {formatApplicationDate(application.applied_at)}
-                          </p>
-                        </div>
-                        
-                        <div>
-                          <h4 className="text-sm font-medium text-gray-700 mb-2">Required Skills</h4>
-                          <p className="text-sm text-gray-600">
-                            {application.required_skills}
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* Description */}
-                      <div className="mb-4">
-                        <h4 className="text-sm font-medium text-gray-700 mb-2">Description</h4>
-                        <p className="text-sm text-gray-600">
-                          {application.description}
-                        </p>
-                      </div>
-
-                      {/* Action Buttons */}
-                      {application.status === 'pending' && (
-                        <div className="flex space-x-3 pt-4 border-t border-gray-200">
-                          <Button
-                            onClick={() => handleStatusUpdate(application.id, 'accepted')}
-                            className="flex items-center space-x-2 bg-green-600 hover:bg-green-700"
-                          >
-                            <CheckCircle className="h-4 w-4" />
-                            <span>Accepted</span>
-                          </Button>
-                          
-                          <Button
-                            onClick={() => handleStatusUpdate(application.id, 'withdrawn')}
-                            variant="outline"
-                            className="flex items-center space-x-2 text-red-600 border-red-300 hover:bg-red-50"
-                          >
-                            <XCircle className="h-4 w-4" />
-                            <span>Withdrawn</span>
-                          </Button>
-                        </div>
-                      )}
-
-                      {application.status === 'accepted' && (
-                        <div className="pt-4 border-t border-gray-200">
-                          <div className="flex items-center space-x-2 text-green-600">
-                            <CheckCircle className="h-5 w-5" />
-                            <span className="font-medium">Congratulations! You accepted this offer.</span>
-                          </div>
-                        </div>
-                      )}
-
-                      {application.status === 'withdrawn' && (
-                        <div className="pt-4 border-t border-gray-200">
-                          <div className="flex items-center space-x-2 text-orange-600">
-                            <XCircle className="h-5 w-5" />
-                            <span className="font-medium">You withdrew from this application. It's now available in recommendations again.</span>
-                          </div>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                </motion.div>
-              ))}
-            </div>
+          ) : (viewMode === 'infinite' ? allApplications : applications).length > 0 ? (
+            <>
+              {viewMode === 'grid' ? (
+                <div className="space-y-6">
+                  {applications.map((application, index) => (
+                    <ApplicationCard
+                      key={application.id}
+                      application={application}
+                      onStatusUpdate={handleStatusUpdate}
+                      index={index}
+                    />
+                  ))}
+                </div>
+              ) : viewMode === 'virtualized' ? (
+                <VirtualizedApplicationList
+                  applications={applications}
+                  onStatusUpdate={handleStatusUpdate}
+                  height={600}
+                />
+              ) : (
+                <InfiniteScrollApplicationList
+                  applications={allApplications}
+                  onStatusUpdate={handleStatusUpdate}
+                  onLoadMore={handleLoadMore}
+                  hasMore={hasNextPage}
+                  isLoading={infiniteLoading}
+                  height={600}
+                />
+              )}
+              
+              {/* Pagination - only show for grid and virtualized views */}
+              {viewMode !== 'infinite' && (
+                <Pagination
+                  currentPage={currentPage}
+                  totalPages={totalPages}
+                  onPageChange={handlePageChange}
+                  hasNextPage={hasNextPage}
+                  hasPrevPage={hasPrevPage}
+                  totalItems={totalItems}
+                  itemsPerPage={ITEMS_PER_PAGE}
+                />
+              )}
+            </>
           ) : (
             <div className="text-center py-12">
               <div className="max-w-md mx-auto">
                 <FileText className="h-16 w-16 text-gray-400 mx-auto mb-4" />
                 <h3 className="text-lg font-medium text-gray-900 mb-2">
-                  No applications yet
+                  No applications found
                 </h3>
                 <p className="text-gray-600 mb-6">
-                  Start applying to internships from your dashboard to see them here.
+                  {searchQuery || currentStatus 
+                    ? 'No applications match your current search or filter criteria.'
+                    : 'Start applying to internships from your dashboard to see them here.'
+                  }
                 </p>
                 <Button
                   onClick={() => router.push('/dashboard')}

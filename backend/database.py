@@ -519,20 +519,43 @@ class Database:
         finally:
             conn.close()
     
-    def get_applications(self, candidate_id: int) -> List[Dict]:
-        """Get all applications for a candidate"""
+    def get_applications(self, candidate_id: int, limit: int = 20, offset: int = 0, 
+                        status: Optional[str] = None, search: Optional[str] = None) -> List[Dict]:
+        """Get applications for a candidate with pagination and filtering"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
         try:
-            cursor.execute('''
+            # Build WHERE clause dynamically
+            where_conditions = ["a.candidate_id = ?"]
+            params = [candidate_id]
+            
+            if status:
+                where_conditions.append("a.status = ?")
+                params.append(status)
+            
+            if search:
+                where_conditions.append("""
+                    (i.title LIKE ? OR i.company LIKE ? OR i.location LIKE ? 
+                     OR i.description LIKE ? OR i.required_skills LIKE ?)
+                """)
+                search_param = f"%{search}%"
+                params.extend([search_param] * 5)
+            
+            where_clause = " AND ".join(where_conditions)
+            
+            query = f'''
                 SELECT a.*, i.title, i.company, i.location, i.description, 
                        i.required_skills, i.preferred_skills, i.duration, i.stipend
                 FROM applications a
                 JOIN internships i ON a.internship_id = i.id
-                WHERE a.candidate_id = ?
+                WHERE {where_clause}
                 ORDER BY a.applied_at DESC
-            ''', (candidate_id,))
+                LIMIT ? OFFSET ?
+            '''
+            
+            params.extend([limit, offset])
+            cursor.execute(query, params)
             
             columns = [description[0] for description in cursor.description]
             applications = [dict(zip(columns, row)) for row in cursor.fetchall()]
@@ -542,6 +565,49 @@ class Database:
         except Exception as e:
             logger.error(f"Error fetching applications: {e}")
             return []
+        finally:
+            conn.close()
+    
+    def get_applications_count(self, candidate_id: int, status: Optional[str] = None, 
+                              search: Optional[str] = None) -> int:
+        """Get total count of applications for a candidate with filtering"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Build WHERE clause dynamically
+            where_conditions = ["a.candidate_id = ?"]
+            params = [candidate_id]
+            
+            if status:
+                where_conditions.append("a.status = ?")
+                params.append(status)
+            
+            if search:
+                where_conditions.append("""
+                    (i.title LIKE ? OR i.company LIKE ? OR i.location LIKE ? 
+                     OR i.description LIKE ? OR i.required_skills LIKE ?)
+                """)
+                search_param = f"%{search}%"
+                params.extend([search_param] * 5)
+            
+            where_clause = " AND ".join(where_conditions)
+            
+            query = f'''
+                SELECT COUNT(*)
+                FROM applications a
+                JOIN internships i ON a.internship_id = i.id
+                WHERE {where_clause}
+            '''
+            
+            cursor.execute(query, params)
+            count = cursor.fetchone()[0]
+            
+            return count
+            
+        except Exception as e:
+            logger.error(f"Error counting applications: {e}")
+            return 0
         finally:
             conn.close()
     
