@@ -203,12 +203,14 @@ export default function ApplicationsPage() {
   }
 
   const getFilterCounts = () => {
-    // For now, we'll use the total items from the API response
-    // In a real app, you might want to fetch counts separately
+    // Calculate counts from the actual applications data
+    const acceptedCount = applications.filter(app => app.status === 'accepted').length
+    const withdrawnCount = applications.filter(app => app.status === 'withdrawn').length
+    
     return {
       total: totalItems,
-      accepted: 0, // Would need separate API call for accurate counts
-      withdrawn: 0
+      accepted: acceptedCount,
+      withdrawn: withdrawnCount
     }
   }
 
@@ -223,7 +225,7 @@ export default function ApplicationsPage() {
   const counts = getFilterCounts()
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+    <div className="min-h-screen">
       <Navbar />
       
       {/* Sidebar Filter */}
@@ -244,7 +246,7 @@ export default function ApplicationsPage() {
         />
       )}
       
-      <div className={`max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 ${isFilterOpen ? 'lg:ml-80' : ''}`}>
+      <div className={`max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-32 pb-8 ${isFilterOpen ? 'lg:ml-80' : ''}`}>
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -265,10 +267,10 @@ export default function ApplicationsPage() {
           
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
+              <h1 className="text-3xl font-bold text-gray-900 mb-2">
                 📋 My Applications
               </h1>
-              <p className="text-lg text-gray-600 dark:text-gray-400">
+              <p className="text-lg text-gray-600">
                 Track your internship applications and their status
               </p>
             </div>
@@ -276,7 +278,7 @@ export default function ApplicationsPage() {
               <Button
                 onClick={toggleFilter}
                 variant="outline"
-                className="bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700"
+                className="bg-white border-gray-300 hover:bg-gray-50"
               >
                 <Filter className="h-4 w-4 mr-2" />
                 Filter

@@ -56,13 +56,13 @@ export default function ApplicationCard({ application, onStatusUpdate, index }: 
           <div className="flex items-start justify-between mb-4">
             <div className="flex-1">
               <div className="flex items-center space-x-3 mb-2">
-                <h3 className="text-xl font-semibold text-gray-900 dark:text-white">
+                <h3 className="text-xl font-semibold text-gray-900">
                   {application.title}
                 </h3>
                 {getStatusBadge(application.status)}
               </div>
               
-              <div className="flex items-center space-x-4 text-sm text-gray-600 dark:text-gray-400 mb-3">
+              <div className="flex items-center space-x-4 text-sm text-gray-600 mb-3">
                 <div className="flex items-center space-x-1">
                   <Building className="h-4 w-4" />
                   <span className="font-medium">{application.company}</span>

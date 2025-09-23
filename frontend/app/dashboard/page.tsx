@@ -5,8 +5,9 @@ import { useRouter } from 'next/navigation'
 import { toast } from 'react-hot-toast'
 import { motion } from 'framer-motion'
 import Navbar from '@/components/Navbar'
-import RecommendationCard from '@/components/RecommendationCard'
+import RecommendationCarousel from '@/components/RecommendationCarousel'
 import DoubtsChatbot from '@/components/DoubtsChatbot'
+import NotificationSystem, { useNotifications } from '@/components/NotificationSystem'
 import { Button, LoadingSpinner, Card, CardContent } from '@/components/ui'
 import { useAuth } from '@/lib/auth'
 import { recommendationAPI, utilityAPI, Recommendation } from '@/lib/api'
@@ -25,6 +26,7 @@ import {
 export default function DashboardPage() {
   const router = useRouter()
   const { user, authenticated } = useAuth()
+  const { notifications, addNotification, removeNotification } = useNotifications()
   const [recommendations, setRecommendations] = useState<Recommendation[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false)
@@ -66,17 +68,35 @@ export default function DashboardPage() {
       return
     }
 
-    // Initialize data seeding
+    // Initialize data seeding only once
     const initializeApp = async () => {
-      try {
-        await utilityAPI.seedData()
-      } catch (error) {
-        console.error('Failed to seed data:', error)
+      const hasSeeded = sessionStorage.getItem('hasSeededData')
+      if (!hasSeeded) {
+        try {
+          await utilityAPI.seedData()
+          sessionStorage.setItem('hasSeededData', 'true')
+        } catch (error) {
+          console.error('Failed to seed data:', error)
+        }
       }
     }
 
     initializeApp()
-  }, [authenticated, router])
+
+    // Show welcome notification only once
+    const hasShownWelcome = sessionStorage.getItem('hasShownWelcome')
+    if (!hasShownWelcome) {
+      setTimeout(() => {
+        addNotification({
+          type: 'success',
+          title: 'Welcome to InternGenie!',
+          message: 'Discover your perfect internship matches with AI-powered recommendations.',
+          duration: 4000
+        })
+        sessionStorage.setItem('hasShownWelcome', 'true')
+      }, 1000)
+    }
+  }, [authenticated, router, addNotification])
 
   // Initialize state from localStorage on mount
   useEffect(() => {
@@ -147,9 +167,14 @@ export default function DashboardPage() {
     const profileUpdated = sessionStorage.getItem('profileUpdated')
     if (profileUpdated === 'true') {
       sessionStorage.removeItem('profileUpdated')
-      toast.success('Your profile was recently updated, get fresh recommendations!')
+      addNotification({
+        type: 'info',
+        title: 'Profile Updated',
+        message: 'Your profile was recently updated, get fresh recommendations!',
+        duration: 5000
+      })
     }
-  }, [])
+  }, [addNotification])
 
   // Listen for application events from other pages
   useEffect(() => {
@@ -304,10 +329,10 @@ export default function DashboardPage() {
   const userSkills = formatSkillsList(user.skills || '')
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+    <div className="min-h-screen">
       <Navbar />
       
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-32 pb-8">
         {/* Header Section */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -328,63 +353,63 @@ export default function DashboardPage() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, delay: 0.1 }}
-          className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8"
+          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8"
         >
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center">
-                <Award className="h-8 w-8 text-blue-600" />
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-600">Education</p>
-                  <p className="text-lg font-semibold text-gray-900">
-                    {user.education || 'Not set'}
-                  </p>
-                </div>
+          <div className="glass-card rounded-2xl p-6 hover:scale-105 transition-all duration-300">
+            <div className="flex items-center">
+              <div className="p-3 rounded-xl bg-gradient-to-br from-blue-500/10 to-blue-600/10">
+                <Award className="h-6 w-6 text-blue-600" />
               </div>
-            </CardContent>
-          </Card>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Education</p>
+                <p className="text-lg font-semibold text-gray-900">
+                  {user.education || 'Not set'}
+                </p>
+              </div>
+            </div>
+          </div>
 
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center">
-                <MapPin className="h-8 w-8 text-green-600" />
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-600">Location</p>
-                  <p className="text-lg font-semibold text-gray-900">
-                    {user.location || 'Not set'}
-                  </p>
-                </div>
+          <div className="glass-card rounded-2xl p-6 hover:scale-105 transition-all duration-300">
+            <div className="flex items-center">
+              <div className="p-3 rounded-xl bg-gradient-to-br from-green-500/10 to-green-600/10">
+                <MapPin className="h-6 w-6 text-green-600" />
               </div>
-            </CardContent>
-          </Card>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Location</p>
+                <p className="text-lg font-semibold text-gray-900">
+                  {user.location || 'Not set'}
+                </p>
+              </div>
+            </div>
+          </div>
 
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center">
-                <Briefcase className="h-8 w-8 text-purple-600" />
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-600">Skills</p>
-                  <p className="text-lg font-semibold text-gray-900">
-                    {userSkills.length}
-                  </p>
-                </div>
+          <div className="glass-card rounded-2xl p-6 hover:scale-105 transition-all duration-300">
+            <div className="flex items-center">
+              <div className="p-3 rounded-xl bg-gradient-to-br from-purple-500/10 to-purple-600/10">
+                <Briefcase className="h-6 w-6 text-purple-600" />
               </div>
-            </CardContent>
-          </Card>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Skills</p>
+                <p className="text-lg font-semibold text-gray-900">
+                  {userSkills.length}
+                </p>
+              </div>
+            </div>
+          </div>
 
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center">
-                <Clock className="h-8 w-8 text-orange-600" />
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-600">Experience</p>
-                  <p className="text-lg font-semibold text-gray-900">
-                    {user.experience_years} years
-                  </p>
-                </div>
+          <div className="glass-card rounded-2xl p-6 hover:scale-105 transition-all duration-300">
+            <div className="flex items-center">
+              <div className="p-3 rounded-xl bg-gradient-to-br from-orange-500/10 to-orange-600/10">
+                <Clock className="h-6 w-6 text-orange-600" />
               </div>
-            </CardContent>
-          </Card>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Experience</p>
+                <p className="text-lg font-semibold text-gray-900">
+                  {user.experience_years} years
+                </p>
+              </div>
+            </div>
+          </div>
         </motion.div>
 
         {/* Action Section */}
@@ -409,7 +434,7 @@ export default function DashboardPage() {
                 <Button
                   onClick={() => fetchRecommendations(true)}
                   disabled={isLoading}
-                  className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700"
+                  className="flex items-center space-x-2 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105"
                 >
                   <Search className="h-4 w-4" />
                   <span>Get Recommendations</span>
@@ -420,7 +445,7 @@ export default function DashboardPage() {
                 <Button
                   onClick={() => fetchRecommendations(false)}
                   disabled={isLoading}
-                  className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700"
+                  className="flex items-center space-x-2 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105"
                 >
                   <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
                   <span>Refresh</span>
@@ -463,32 +488,18 @@ export default function DashboardPage() {
           )}
 
           {!isLoading && showCards && recommendations.length > 0 && (
-            <div className="space-y-6">
-              {recommendations.slice(0, visibleCards).map((recommendation, index) => (
-                <motion.div
-                  key={recommendation.internship_id}
-                  initial={{ opacity: 0, x: -100, y: 20 }}
-                  animate={{ 
-                    opacity: appliedInternships.has(recommendation.internship_id) ? 0 : 1, 
-                    x: 0,
-                    y: 0,
-                    scale: appliedInternships.has(recommendation.internship_id) ? 0.95 : 1
-                  }}
-                  exit={{ opacity: 0, y: -20, scale: 0.95 }}
-                  transition={{ 
-                    duration: 0.6, 
-                    ease: "easeOut"
-                  }}
-                >
-                  <RecommendationCard
-                    recommendation={recommendation}
-                    onSaveToggle={handleSaveToggle}
-                    onAskDoubts={handleAskDoubts}
-                    onApplicationSubmitted={handleApplicationSubmitted}
-                  />
-                </motion.div>
-              ))}
-            </div>
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.2 }}
+            >
+              <RecommendationCarousel
+                recommendations={recommendations}
+                onSaveToggle={handleSaveToggle}
+                onAskDoubts={handleAskDoubts}
+                onApplicationSubmitted={handleApplicationSubmitted}
+              />
+            </motion.div>
           )}
 
           {!isLoading && !hasLoadedOnce && (
@@ -634,6 +645,13 @@ export default function DashboardPage() {
         isOpen={isChatbotOpen}
         onClose={handleCloseChatbot}
         recommendation={selectedRecommendation}
+      />
+
+
+      {/* Notification System */}
+      <NotificationSystem
+        notifications={notifications}
+        onRemove={removeNotification}
       />
     </div>
   )

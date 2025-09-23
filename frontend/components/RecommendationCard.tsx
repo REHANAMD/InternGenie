@@ -6,13 +6,13 @@ import { Button, Badge, Card, CardContent, LoadingSpinner } from '@/components/u
 import { Recommendation, internshipAPI, applicationAPI } from '@/lib/api'
 import { calculateMatchPercentage, formatStipend } from '@/lib/utils'
 import { useAuth } from '@/lib/auth'
+import AnimatedMatchScore from './AnimatedMatchScore'
+import HeartIcon from './HeartIcon'
 import { 
   MapPin, 
   Clock, 
   DollarSign, 
   Building, 
-  Heart, 
-  HeartOff, 
   ExternalLink,
   ChevronDown,
   ChevronUp,
@@ -43,7 +43,9 @@ export default function RecommendationCard({
   const [isCheckingStatus, setIsCheckingStatus] = useState(true)
   const hasCheckedRef = useRef(false)
 
-  const matchData = calculateMatchPercentage(recommendation.score)
+  // Calculate match percentage with fallback for zero scores
+  const score = recommendation.score || 0
+  const matchData = calculateMatchPercentage(score)
 
   // Memoize user ID to prevent unnecessary re-renders
   const userId = useMemo(() => user?.id, [user?.id])
@@ -134,69 +136,69 @@ export default function RecommendationCard({
   }
 
   return (
-    <Card className="hover:shadow-lg transition-all duration-300 border-l-4 border-l-blue-500">
-      <CardContent className="p-6">
-        <div className="flex items-start gap-4 mb-4">
-          {/* Match Score Box - Left Side */}
-          <div className="flex flex-col items-center justify-center w-20 h-20 bg-white border-2 border-gray-200 rounded-2xl shadow-sm flex-shrink-0">
-            <div className={`text-xl font-bold ${matchData.color}`}>
-              {matchData.percentage}%
-            </div>
-            <div className="text-xs text-gray-500">match</div>
-          </div>
+    <div className="glass-card rounded-3xl p-8 hover:scale-105 transition-all duration-300 border-l-4 border-l-blue-500 h-full flex flex-col shadow-2xl hover:shadow-3xl">
+      <div className="flex items-start gap-4 mb-4">
+        {/* Match Score Box - Left Side */}
+        <div className="flex-shrink-0">
+            <AnimatedMatchScore 
+              percentage={matchData.percentage}
+              color={matchData.color}
+              size={100}
+            />
+        </div>
 
-          {/* Main Content */}
-          <div className="flex-1">
-            <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
-              {recommendation.title}
-            </h3>
+        {/* Main Content */}
+        <div className="flex-1 min-w-0">
+          <h3 className="text-2xl font-bold text-gray-900 mb-3 line-clamp-2">
+            {recommendation.title}
+          </h3>
+          
+          <div className="flex flex-wrap gap-3 text-base text-gray-600 mb-4">
+            <div className="flex items-center space-x-2 px-4 py-2 rounded-full bg-gradient-to-r from-blue-500/10 to-blue-600/10">
+              <Building className="h-5 w-5 text-blue-600" />
+              <span className="font-semibold text-blue-700">{recommendation.company}</span>
+            </div>
             
-            <div className="flex items-center space-x-4 text-sm text-gray-600 dark:text-gray-400 mb-3">
-              <div className="flex items-center space-x-1">
-                <Building className="h-4 w-4" />
-                <span className="font-medium">{recommendation.company}</span>
-              </div>
-              
-              <div className="flex items-center space-x-1">
-                <MapPin className="h-4 w-4" />
-                <span>{recommendation.location}</span>
-              </div>
-              
-              <div className="flex items-center space-x-1">
-                <Clock className="h-4 w-4" />
-                <span>{recommendation.duration}</span>
-              </div>
+            <div className="flex items-center space-x-2 px-4 py-2 rounded-full bg-gradient-to-r from-green-500/10 to-green-600/10">
+              <MapPin className="h-5 w-5 text-green-600" />
+              <span className="font-semibold text-green-700">{recommendation.location}</span>
+            </div>
+            
+            <div className="flex items-center space-x-2 px-4 py-2 rounded-full bg-gradient-to-r from-purple-500/10 to-purple-600/10">
+              <Clock className="h-5 w-5 text-purple-600" />
+              <span className="font-semibold text-purple-700">{recommendation.duration}</span>
             </div>
           </div>
         </div>
+      </div>
 
         {/* Stipend */}
-        <div className="flex items-center space-x-1 mb-4 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg">
-          <DollarSign className="h-4 w-4 text-green-600 dark:text-green-400" />
-          <span className="font-medium text-green-800 dark:text-green-300">
+        <div className="flex items-center space-x-3 mb-6 p-6 bg-gradient-to-r from-green-500/10 to-emerald-500/10 rounded-2xl border border-green-200/50">
+          <DollarSign className="h-6 w-6 text-green-600" />
+          <span className="font-bold text-green-800 text-xl">
             {formatStipend(recommendation.stipend)}
           </span>
         </div>
 
         {/* Skills Section */}
-        <div className="mb-4">
-          <div className="grid md:grid-cols-2 gap-4">
+        <div className="mb-6">
+          <div className="grid md:grid-cols-2 gap-6">
             {recommendation.matched_skills && recommendation.matched_skills.length > 0 && (
               <div>
-                <div className="flex items-center space-x-1 mb-2">
-                  <CheckCircle className="h-4 w-4 text-green-600" />
-                  <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Your Matching Skills</span>
+                <div className="flex items-center space-x-2 mb-3">
+                  <CheckCircle className="h-5 w-5 text-green-600" />
+                  <span className="text-base font-semibold text-gray-700">Your Matching Skills</span>
                 </div>
-                <div className="flex flex-wrap gap-1">
+                <div className="flex flex-wrap gap-3">
                   {recommendation.matched_skills.slice(0, 4).map((skill, index) => (
-                    <Badge key={index} variant="default" className="text-xs">
+                    <span key={index} className="skill-badge">
                       {skill}
-                    </Badge>
+                    </span>
                   ))}
                   {recommendation.matched_skills.length > 4 && (
-                    <Badge variant="secondary" className="text-xs">
+                    <span className="skill-badge bg-gradient-to-r from-gray-500/10 to-gray-600/10 text-gray-700 border-gray-300/50">
                       +{recommendation.matched_skills.length - 4} more
-                    </Badge>
+                    </span>
                   )}
                 </div>
               </div>
@@ -204,20 +206,20 @@ export default function RecommendationCard({
 
             {recommendation.skill_gaps && recommendation.skill_gaps.length > 0 && (
               <div>
-                <div className="flex items-center space-x-1 mb-2">
-                  <AlertCircle className="h-4 w-4 text-orange-600" />
-                  <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Skills to Learn</span>
+                <div className="flex items-center space-x-2 mb-3">
+                  <AlertCircle className="h-5 w-5 text-orange-600" />
+                  <span className="text-base font-semibold text-gray-700">Skills to Learn</span>
                 </div>
-                <div className="flex flex-wrap gap-1">
+                <div className="flex flex-wrap gap-3">
                   {recommendation.skill_gaps.slice(0, 4).map((skill, index) => (
-                    <Badge key={index} variant="outline" className="text-xs text-orange-700 border-orange-300">
+                    <span key={index} className="skill-gap-badge">
                       {skill}
-                    </Badge>
+                    </span>
                   ))}
                   {recommendation.skill_gaps.length > 4 && (
-                    <Badge variant="secondary" className="text-xs">
+                    <span className="skill-gap-badge bg-gradient-to-r from-gray-500/10 to-gray-600/10 text-gray-700 border-gray-300/50">
                       +{recommendation.skill_gaps.length - 4} more
-                    </Badge>
+                    </span>
                   )}
                 </div>
               </div>
@@ -227,43 +229,44 @@ export default function RecommendationCard({
 
         {/* Why it matches */}
         {recommendation.explanation && (
-          <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-            <p className="text-sm text-blue-800 dark:text-blue-200">
+          <div className="mb-6 p-5 bg-gradient-to-r from-blue-500/10 to-indigo-500/10 rounded-2xl border border-blue-200/50">
+            <p className="text-base text-blue-800">
               💡 <strong>Why this matches:</strong> {recommendation.explanation}
             </p>
           </div>
         )}
 
         {/* Expandable Description */}
-        <div className="mb-4">
+        <div className="mb-6">
           <button
             onClick={() => setIsExpanded(!isExpanded)}
-            className="flex items-center space-x-1 text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white"
+            className="flex items-center space-x-2 text-base font-semibold text-gray-700 hover:text-gray-900"
           >
             <span>📋 Description</span>
             {isExpanded ? (
-              <ChevronUp className="h-4 w-4" />
+              <ChevronUp className="h-5 w-5" />
             ) : (
-              <ChevronDown className="h-4 w-4" />
+              <ChevronDown className="h-5 w-5" />
             )}
           </button>
           
           {isExpanded && (
-            <div className="mt-2 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
-              <p className="text-sm text-gray-700 dark:text-gray-300">{recommendation.description}</p>
+            <div className="mt-3 p-5 bg-gradient-to-r from-gray-50/80 to-gray-100/80 rounded-2xl border border-gray-200/50 backdrop-blur-sm">
+              <p className="text-base text-gray-700">{recommendation.description}</p>
             </div>
           )}
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex space-x-3">
+      {/* Action Buttons - Fixed at bottom */}
+      <div className="mt-auto pt-6">
+        <div className="flex space-x-4">
           <Button
             onClick={handleApply}
             disabled={isApplied || isApplying || isCheckingStatus}
-            className={`flex-1 ${
+            className={`flex-1 rounded-2xl font-bold text-lg py-4 transition-all duration-200 hover:scale-105 ${
               isApplied 
                 ? 'bg-gray-400 cursor-not-allowed' 
-                : 'bg-blue-600 hover:bg-blue-700'
+                : 'bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 shadow-xl hover:shadow-2xl'
             }`}
           >
             {isCheckingStatus ? (
@@ -292,9 +295,9 @@ export default function RecommendationCard({
           <Button
             onClick={handleAskDoubts}
             variant="outline"
-            className="flex items-center space-x-1"
+            className="flex items-center space-x-2 px-6 py-4 rounded-2xl hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600 transition-all duration-200 hover:scale-105 font-semibold"
           >
-            <MessageCircle className="h-4 w-4" />
+            <MessageCircle className="h-5 w-5" />
             <span className="hidden sm:inline">Ask Doubts</span>
           </Button>
           
@@ -302,24 +305,23 @@ export default function RecommendationCard({
             onClick={handleSaveToggle}
             variant={isSaved ? "destructive" : "outline"}
             disabled={isLoading}
-            className="flex items-center space-x-1"
+            className={`flex items-center space-x-2 px-6 py-4 rounded-2xl transition-all duration-200 hover:scale-105 font-semibold ${
+              isSaved 
+                ? 'hover:bg-red-50 hover:border-red-200 hover:text-red-600' 
+                : 'hover:bg-pink-50 hover:border-pink-200 hover:text-pink-600'
+            }`}
           >
             {isLoading ? (
               <LoadingSpinner size="sm" />
-            ) : isSaved ? (
-              <>
-                <HeartOff className="h-4 w-4" />
-                <span className="hidden sm:inline">Remove</span>
-              </>
             ) : (
               <>
-                <Heart className="h-4 w-4" />
-                <span className="hidden sm:inline">Save</span>
+                <HeartIcon isFilled={isSaved} />
+                <span className="hidden sm:inline">{isSaved ? 'Remove' : 'Save'}</span>
               </>
             )}
           </Button>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   )
 }

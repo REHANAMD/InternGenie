@@ -31,7 +31,9 @@ export function calculateMatchPercentage(score: number): {
   color: string, 
   emoji: string 
 } {
-  const percentage = Math.round(score * 100)
+  // Ensure score is a valid number and apply minimum threshold
+  const validScore = Math.max(score || 0, 0.1) // Minimum 10% score
+  const percentage = Math.round(validScore * 100)
   
   if (percentage >= 80) {
     return { percentage, color: 'text-green-600', emoji: '🟢' }

@@ -233,10 +233,10 @@ export default function SavedInternshipsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+    <div className="min-h-screen">
       <Navbar />
       
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-32 pb-8">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -247,7 +247,7 @@ export default function SavedInternshipsPage() {
           <Button
             onClick={() => router.back()}
             variant="ghost"
-            className="mb-4 p-0 h-auto font-normal text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+            className="mb-4 p-0 h-auto font-normal text-gray-600 hover:text-gray-900"
           >
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back to Dashboard
@@ -255,11 +255,11 @@ export default function SavedInternshipsPage() {
           
           <div className="flex items-center space-x-3 mb-2">
             <Heart className="h-8 w-8 text-red-500" />
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
+            <h1 className="text-3xl font-bold text-gray-900">
               Your Saved Internships
             </h1>
           </div>
-          <p className="text-gray-600 dark:text-gray-400">
+          <p className="text-gray-600">
             {savedInternships.length} internship{savedInternships.length !== 1 ? 's' : ''} saved for later
           </p>
         </motion.div>
@@ -323,7 +323,7 @@ export default function SavedInternshipsPage() {
                       <div className="flex items-start justify-between mb-4">
                         <div className="flex-1">
                           <div className="flex items-center justify-between mb-2">
-                            <h3 className="text-xl font-semibold text-gray-900 dark:text-white">
+                            <h3 className="text-xl font-semibold text-gray-900">
                               {internship.title}
                             </h3>
                             <div className="flex items-center space-x-2">
