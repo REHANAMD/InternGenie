@@ -70,7 +70,7 @@ export default function RecommendationCarousel({
       <button
         onClick={goToPrevious}
         disabled={recommendations.length <= 1}
-        className="absolute left-4 top-1/2 -translate-y-1/2 z-10 p-3 rounded-full bg-white/90 backdrop-blur-md border border-white/20 shadow-xl hover:shadow-2xl transition-all duration-200 hover:scale-110 disabled:opacity-50 disabled:cursor-not-allowed"
+        className="absolute left-4 top-1/2 -translate-y-1/2 z-30 p-3 rounded-full bg-white/90 backdrop-blur-md border border-white/20 shadow-xl hover:shadow-2xl transition-all duration-200 hover:scale-110 disabled:opacity-50 disabled:cursor-not-allowed"
         aria-label="Previous recommendation"
       >
         <ChevronLeft className="h-6 w-6 text-gray-700" />
@@ -79,7 +79,7 @@ export default function RecommendationCarousel({
       <button
         onClick={goToNext}
         disabled={recommendations.length <= 1}
-        className="absolute right-4 top-1/2 -translate-y-1/2 z-10 p-3 rounded-full bg-white/90 backdrop-blur-md border border-white/20 shadow-xl hover:shadow-2xl transition-all duration-200 hover:scale-110 disabled:opacity-50 disabled:cursor-not-allowed"
+        className="absolute right-4 top-1/2 -translate-y-1/2 z-30 p-3 rounded-full bg-white/90 backdrop-blur-md border border-white/20 shadow-xl hover:shadow-2xl transition-all duration-200 hover:scale-110 disabled:opacity-50 disabled:cursor-not-allowed"
         aria-label="Next recommendation"
       >
         <ChevronRight className="h-6 w-6 text-gray-700" />
@@ -124,45 +124,53 @@ export default function RecommendationCarousel({
           </motion.div>
         </AnimatePresence>
 
-        {/* Background Cards */}
+        {/* Background Cards - Left and Right Sides */}
         {recommendations.length > 1 && (
           <>
-            {/* Previous Card (Left) */}
+            {/* Previous Card - Left Side */}
             {currentIndex > 0 && (
               <motion.div
-                initial={{ x: -200, opacity: 0.3, scale: 0.7 }}
-                animate={{ x: -150, opacity: 0.3, scale: 0.75 }}
+                initial={{ x: -300, opacity: 0.3, scale: 0.8 }}
+                animate={{ x: -200, opacity: 0.3, scale: 0.8 }}
                 transition={{ duration: 0.3 }}
-                className="absolute left-4 top-1/2 -translate-y-1/2 w-full max-w-4xl pointer-events-none z-10"
+                className="absolute inset-0 pointer-events-none z-10"
                 style={{ zIndex: 10 }}
               >
-                <div className="transform rotate-[-8deg]">
-                  <RecommendationCard
-                    recommendation={recommendations[(currentIndex - 1 + recommendations.length) % recommendations.length]}
-                    onSaveToggle={onSaveToggle}
-                    onAskDoubts={onAskDoubts}
-                    onApplicationSubmitted={onApplicationSubmitted}
-                  />
+                <div className="h-full flex items-center justify-center p-8">
+                  <div className="w-full max-w-4xl">
+                    <div className="backdrop-blur-md">
+                      <RecommendationCard
+                        recommendation={recommendations[(currentIndex - 1 + recommendations.length) % recommendations.length]}
+                        onSaveToggle={onSaveToggle}
+                        onAskDoubts={onAskDoubts}
+                        onApplicationSubmitted={onApplicationSubmitted}
+                      />
+                    </div>
+                  </div>
                 </div>
               </motion.div>
             )}
 
-            {/* Next Card (Right) */}
+            {/* Next Card - Right Side */}
             {currentIndex < recommendations.length - 1 && (
               <motion.div
-                initial={{ x: 200, opacity: 0.3, scale: 0.7 }}
-                animate={{ x: 150, opacity: 0.3, scale: 0.75 }}
+                initial={{ x: 300, opacity: 0.3, scale: 0.8 }}
+                animate={{ x: 200, opacity: 0.3, scale: 0.8 }}
                 transition={{ duration: 0.3 }}
-                className="absolute right-4 top-1/2 -translate-y-1/2 w-full max-w-4xl pointer-events-none z-10"
+                className="absolute inset-0 pointer-events-none z-10"
                 style={{ zIndex: 10 }}
               >
-                <div className="transform rotate-[8deg]">
-                  <RecommendationCard
-                    recommendation={recommendations[(currentIndex + 1) % recommendations.length]}
-                    onSaveToggle={onSaveToggle}
-                    onAskDoubts={onAskDoubts}
-                    onApplicationSubmitted={onApplicationSubmitted}
-                  />
+                <div className="h-full flex items-center justify-center p-8">
+                  <div className="w-full max-w-4xl">
+                    <div className="backdrop-blur-md">
+                      <RecommendationCard
+                        recommendation={recommendations[(currentIndex + 1) % recommendations.length]}
+                        onSaveToggle={onSaveToggle}
+                        onAskDoubts={onAskDoubts}
+                        onApplicationSubmitted={onApplicationSubmitted}
+                      />
+                    </div>
+                  </div>
                 </div>
               </motion.div>
             )}

@@ -14,6 +14,7 @@ import logging
 from database import Database
 from resume_parser import ResumeParser
 from recommender import RecommendationEngine
+from enhanced_recommender import EnhancedRecommendationEngine
 from auth import AuthManager
 from utils import Utils
 
@@ -40,6 +41,7 @@ app.add_middleware(
 db = Database()
 parser = ResumeParser()
 recommender = RecommendationEngine(db)
+enhanced_engine = EnhancedRecommendationEngine(db)
 auth_manager = AuthManager()
 
 # Pydantic models for request/response
@@ -503,7 +505,7 @@ async def get_recommendations(
             db.clear_duplicate_applications(current_user['id'])
             db.clear_recommendations_for_candidate(current_user['id'])
         
-        recommendations = recommender.get_recommendations(
+        recommendations = enhanced_engine.get_recommendations(
             current_user['id'],
             top_n=limit,
             use_cache=use_cache
@@ -876,6 +878,98 @@ async def health_check():
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat()
     }
+
+# ML and Analytics endpoints
+@app.post("/track-behavior")
+async def track_behavior(
+    behavior_data: dict,
+    current_user: dict = Depends(get_current_user)
+):
+    """Track user behavior for ML learning"""
+    try:
+        action = behavior_data.get('action')
+        internship_id = behavior_data.get('internship_id')
+        metadata = behavior_data.get('metadata', {})
+        
+        if not action or not internship_id:
+            raise HTTPException(status_code=400, detail="Action and internship_id are required")
+        
+        enhanced_engine.track_user_behavior(
+            current_user['id'],
+            action,
+            internship_id,
+            metadata
+        )
+        
+        return {"message": "Behavior tracked successfully"}
+    except Exception as e:
+        logger.error(f"Track behavior error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to track behavior")
+
+@app.get("/recommendations/{candidate_id}/explanation")
+async def get_recommendation_explanation(
+    candidate_id: int,
+    internship_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    """Get detailed explanation for a specific recommendation"""
+    try:
+        if current_user['id'] != candidate_id:
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        explanation = enhanced_engine.get_recommendation_explanation(
+            candidate_id, internship_id
+        )
+        
+        return explanation
+    except Exception as e:
+        logger.error(f"Get explanation error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get explanation")
+
+@app.get("/user-insights")
+async def get_user_insights(
+    current_user: dict = Depends(get_current_user)
+):
+    """Get user insights based on behavior analysis"""
+    try:
+        insights = enhanced_engine.get_user_insights(current_user['id'])
+        return insights
+    except Exception as e:
+        logger.error(f"Get user insights error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get user insights")
+
+@app.get("/market-insights")
+async def get_market_insights():
+    """Get market insights based on application data"""
+    try:
+        insights = enhanced_engine.get_market_insights()
+        return insights
+    except Exception as e:
+        logger.error(f"Get market insights error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get market insights")
+
+@app.get("/trending-skills")
+async def get_trending_skills(limit: int = 10):
+    """Get trending skills based on recent applications"""
+    try:
+        trending = enhanced_engine.get_trending_skills()
+        return {"trending_skills": trending[:limit]}
+    except Exception as e:
+        logger.error(f"Get trending skills error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get trending skills")
+
+@app.post("/retrain-models")
+async def retrain_models(
+    current_user: dict = Depends(get_current_user)
+):
+    """Retrain ML models with latest data (admin only)"""
+    try:
+        # In production, add admin check here
+        enhanced_engine.retrain_models()
+        return {"message": "Models retrained successfully"}
+    except Exception as e:
+        logger.error(f"Retrain models error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrain models")
 
 # Run the application
 if __name__ == "__main__":

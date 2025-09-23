@@ -94,6 +94,20 @@ class Database:
             )
         ''')
         
+        # Create user_behaviors table for ML learning
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_behaviors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                candidate_id INTEGER NOT NULL,
+                action TEXT NOT NULL,
+                internship_id INTEGER NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                metadata TEXT,
+                FOREIGN KEY (candidate_id) REFERENCES candidates(id),
+                FOREIGN KEY (internship_id) REFERENCES internships(id)
+            )
+        ''')
+        
         # Create recommendations table for caching
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS recommendations (
@@ -400,13 +414,49 @@ class Database:
             return dict(zip(columns, row))
         return None
     
+    def get_all_candidates(self) -> List[Dict]:
+        """Get all candidates from database"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT id, email, name, education, skills, location, 
+                       experience_years, phone, linkedin, github, created_at
+                FROM candidates
+                ORDER BY created_at DESC
+            ''')
+            
+            candidates = []
+            for row in cursor.fetchall():
+                candidate = {
+                    'id': row[0],
+                    'email': row[1],
+                    'name': row[2],
+                    'education': row[3],
+                    'skills': row[4],
+                    'location': row[5],
+                    'experience_years': row[6],
+                    'phone': row[7],
+                    'linkedin': row[8],
+                    'github': row[9],
+                    'created_at': row[10]
+                }
+                candidates.append(candidate)
+            
+            conn.close()
+            return candidates
+        except Exception as e:
+            logger.error(f"Error getting all candidates: {e}")
+            return []
+    
     def save_recommendation(self, candidate_id: int, internship_id: int, 
                            score: float, explanation: str):
         """Save recommendation for caching"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
         try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
             cursor.execute('''
                 INSERT INTO recommendations 
                 (candidate_id, internship_id, score, explanation)
@@ -416,6 +466,121 @@ class Database:
             conn.commit()
             conn.close()
             return True
+        except Exception as e:
+            logger.error(f"Error saving recommendation: {e}")
+            return False
+    
+    def store_user_behavior(self, behavior_record: Dict) -> bool:
+        """Store user behavior data for ML learning"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT INTO user_behaviors (candidate_id, action, internship_id, metadata)
+                VALUES (?, ?, ?, ?)
+            ''', (
+                behavior_record['candidate_id'],
+                behavior_record['action'],
+                behavior_record['internship_id'],
+                json.dumps(behavior_record.get('metadata', {}))
+            ))
+            
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            logger.error(f"Error storing user behavior: {e}")
+            return False
+    
+    def get_user_behaviors(self, candidate_id: int = None, 
+                          action: str = None, 
+                          days_back: int = 30) -> List[Dict]:
+        """Get user behavior data for ML learning"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            query = '''
+                SELECT candidate_id, action, internship_id, timestamp, metadata
+                FROM user_behaviors
+                WHERE timestamp >= datetime('now', '-{} days')
+            '''.format(days_back)
+            
+            params = []
+            if candidate_id:
+                query += ' AND candidate_id = ?'
+                params.append(candidate_id)
+            
+            if action:
+                query += ' AND action = ?'
+                params.append(action)
+            
+            query += ' ORDER BY timestamp DESC'
+            
+            cursor.execute(query, params)
+            behaviors = []
+            
+            for row in cursor.fetchall():
+                behavior = {
+                    'candidate_id': row[0],
+                    'action': row[1],
+                    'internship_id': row[2],
+                    'timestamp': row[3],
+                    'metadata': json.loads(row[4]) if row[4] else {}
+                }
+                behaviors.append(behavior)
+            
+            conn.close()
+            return behaviors
+        except Exception as e:
+            logger.error(f"Error getting user behaviors: {e}")
+            return []
+    
+    def get_users_with_behaviors(self) -> List[int]:
+        """Get list of users who have behavior data"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT DISTINCT candidate_id FROM user_behaviors
+            ''')
+            
+            users = [row[0] for row in cursor.fetchall()]
+            conn.close()
+            return users
+        except Exception as e:
+            logger.error(f"Error getting users with behaviors: {e}")
+            return []
+    
+    def get_historical_applications(self) -> List[Dict]:
+        """Get historical application data for success prediction"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT candidate_id, internship_id, status, applied_at
+                FROM applications
+                WHERE status IN ('accepted', 'rejected', 'pending')
+                ORDER BY applied_at DESC
+            ''')
+            
+            applications = []
+            for row in cursor.fetchall():
+                applications.append({
+                    'candidate_id': row[0],
+                    'internship_id': row[1],
+                    'status': row[2],
+                    'applied_at': row[3]
+                })
+            
+            conn.close()
+            return applications
+        except Exception as e:
+            logger.error(f"Error getting historical applications: {e}")
+            return []
         except Exception as e:
             logger.error(f"Error saving recommendation: {e}")
             conn.close()
