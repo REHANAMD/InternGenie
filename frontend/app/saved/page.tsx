@@ -7,7 +7,7 @@ import { motion } from 'framer-motion'
 import Navbar from '@/components/Navbar'
 import { Button, Card, CardContent, LoadingSpinner, Badge } from '@/components/ui'
 import { useAuth } from '@/lib/auth'
-import { internshipAPI, Internship, applicationAPI } from '@/lib/api'
+import { internshipAPI, Internship, applicationAPI, insightsAPI } from '@/lib/api'
 import { formatStipend, formatDate } from '@/lib/utils'
 import { 
   ArrowLeft,
@@ -209,6 +209,21 @@ export default function SavedInternshipsPage() {
           })
           return newMap
         })
+        
+        // Track apply behavior
+        try {
+          const internship = savedInternships.find(i => i.id === internshipId)
+          if (internship) {
+            await insightsAPI.trackBehavior('apply', internshipId, {
+              company: internship.company,
+              location: internship.location,
+              source: 'saved_internships',
+              required_skills: internship.required_skills
+            })
+          }
+        } catch (error) {
+          console.error('Error tracking apply behavior:', error)
+        }
         
         // Dispatch event to refresh dashboard if user navigates there
         window.dispatchEvent(new CustomEvent('applicationSubmitted', { 

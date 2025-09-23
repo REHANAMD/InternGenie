@@ -313,9 +313,45 @@ export const profileAPI = {
   }
 };
 
+export const insightsAPI = {
+  getUserInsights: async (): Promise<any> => {
+    const response = await apiClient.get('/user-insights');
+    return response.data;
+  },
+
+  getMarketInsights: async (): Promise<any> => {
+    const response = await apiClient.get('/market-insights');
+    return response.data;
+  },
+
+  getTrendingSkills: async (limit: number = 10): Promise<{ trending_skills: any[] }> => {
+    const response = await apiClient.get(`/trending-skills?limit=${limit}`);
+    return response.data;
+  },
+
+  trackBehavior: async (action: string, internshipId: number, metadata: any = {}): Promise<{ message: string }> => {
+    const response = await apiClient.post('/track-behavior', {
+      action,
+      internship_id: internshipId,
+      metadata
+    });
+    return response.data;
+  }
+};
+
 export const utilityAPI = {
   seedData: async (): Promise<{ success: boolean; message: string }> => {
     const response = await apiClient.post('/seed_data');
+    return response.data;
+  },
+
+  generateSampleData: async (): Promise<{ success: boolean; message: string; data: any }> => {
+    const response = await apiClient.post('/generate-sample-data');
+    return response.data;
+  },
+
+  resetInsightsData: async (): Promise<{ success: boolean; message: string; data: any }> => {
+    const response = await apiClient.post('/reset-insights-data');
     return response.data;
   },
 

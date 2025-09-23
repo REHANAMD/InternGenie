@@ -971,6 +971,91 @@ async def retrain_models(
         logger.error(f"Retrain models error: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrain models")
 
+@app.post("/generate-sample-data")
+async def generate_sample_data():
+    """Generate sample behavior and application data for testing (development only)"""
+    try:
+        from train_ml_models import generate_sample_behavior_data, generate_sample_application_data
+        
+        # Generate behavior data
+        generate_sample_behavior_data(db, num_users=10, num_interactions=100)
+        
+        # Generate application data
+        generate_sample_application_data(db, num_applications=30)
+        
+        # Get counts
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT COUNT(*) FROM user_behaviors")
+        behavior_count = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM applications")
+        application_count = cursor.fetchone()[0]
+        
+        conn.close()
+        
+        return {
+            "success": True,
+            "message": "Sample data generated successfully",
+            "data": {
+                "behavior_records": behavior_count,
+                "applications": application_count
+            }
+        }
+    except Exception as e:
+        logger.error(f"Generate sample data error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate sample data")
+
+@app.post("/reset-insights-data")
+async def reset_insights_data():
+    """Reset all behavior and application data for fresh demonstration (development only)"""
+    try:
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        
+        # Get counts before deletion
+        cursor.execute("SELECT COUNT(*) FROM user_behaviors")
+        behavior_count_before = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM applications")
+        application_count_before = cursor.fetchone()[0]
+        
+        # Delete all behavior data
+        cursor.execute("DELETE FROM user_behaviors")
+        behaviors_deleted = cursor.rowcount
+        
+        # Delete all application data
+        cursor.execute("DELETE FROM applications")
+        applications_deleted = cursor.rowcount
+        
+        # Clear recommendations cache
+        cursor.execute("DELETE FROM recommendations")
+        recommendations_deleted = cursor.rowcount
+        
+        # Clear saved internships
+        cursor.execute("DELETE FROM saved_internships")
+        saved_deleted = cursor.rowcount
+        
+        conn.commit()
+        conn.close()
+        
+        logger.info(f"Reset insights data: {behaviors_deleted} behaviors, {applications_deleted} applications, {recommendations_deleted} recommendations, {saved_deleted} saved internships")
+        
+        return {
+            "success": True,
+            "message": "All insights data reset successfully",
+            "data": {
+                "behaviors_deleted": behaviors_deleted,
+                "applications_deleted": applications_deleted,
+                "recommendations_deleted": recommendations_deleted,
+                "saved_deleted": saved_deleted
+            }
+        }
+    except Exception as e:
+        logger.error(f"Reset insights data error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to reset insights data")
+
 # Run the application
 if __name__ == "__main__":
     import uvicorn

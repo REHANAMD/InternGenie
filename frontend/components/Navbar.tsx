@@ -90,15 +90,15 @@ export default function Navbar() {
           </Link>
           
           <Link 
-            href="/profile"
+            href="/insights"
             className={`flex items-center space-x-2 px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 hover:scale-105 ${
-              isActiveRoute('/profile') 
+              isActiveRoute('/insights') 
                 ? 'bg-white/60 text-gray-900 shadow-xl border border-white/70 shadow-blue-500/20' 
                 : 'text-gray-700 hover:text-gray-900 hover:bg-white/30'
             }`}
           >
             <Settings className="h-4 w-4" />
-            <span>Profile</span>
+            <span>Insights</span>
           </Link>
         </div>
 
@@ -107,10 +107,13 @@ export default function Navbar() {
 
         {/* User Menu */}
         <div className="hidden md:flex items-center space-x-3">
-          <div className="flex items-center space-x-2 px-3 py-2 rounded-full bg-white/20 backdrop-blur-sm border border-white/30">
+          <Link 
+            href="/profile"
+            className="flex items-center space-x-2 px-3 py-2 rounded-full bg-white/20 backdrop-blur-sm border border-white/30 hover:bg-white/30 transition-all duration-200 hover:scale-105"
+          >
             <User className="h-4 w-4 text-gray-600" />
             <span className="text-sm font-medium text-gray-700">{user.name}</span>
-          </div>
+          </Link>
           
           <Button
             onClick={handleLogout}
@@ -187,6 +190,19 @@ export default function Navbar() {
             </Link>
             
             <Link
+              href="/insights"
+              className={`flex items-center space-x-2 px-3 py-2 rounded-md text-base font-medium transition-all duration-200 ${
+                isActiveRoute('/insights') 
+                  ? 'bg-white/60 text-gray-900 shadow-xl border border-white/70 shadow-blue-500/20' 
+                  : 'text-gray-700 hover:text-gray-900 hover:bg-white/30'
+              }`}
+              onClick={() => setIsMobileMenuOpen(false)}
+            >
+              <Settings className="h-5 w-5" />
+              <span>Insights</span>
+            </Link>
+            
+            <Link
               href="/profile"
               className={`flex items-center space-x-2 px-3 py-2 rounded-md text-base font-medium transition-all duration-200 ${
                 isActiveRoute('/profile') 
@@ -195,7 +211,7 @@ export default function Navbar() {
               }`}
               onClick={() => setIsMobileMenuOpen(false)}
             >
-              <Settings className="h-5 w-5" />
+              <User className="h-5 w-5" />
               <span>Profile Settings</span>
             </Link>
             

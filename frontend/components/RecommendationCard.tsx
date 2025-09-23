@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { toast } from 'react-hot-toast'
 import { Button, Badge, Card, CardContent, LoadingSpinner } from '@/components/ui'
-import { Recommendation, internshipAPI, applicationAPI } from '@/lib/api'
+import { Recommendation, internshipAPI, applicationAPI, insightsAPI } from '@/lib/api'
 import { calculateMatchPercentage, formatStipend } from '@/lib/utils'
 import { useAuth } from '@/lib/auth'
 import AnimatedMatchScore from './AnimatedMatchScore'
@@ -77,6 +77,36 @@ export default function RecommendationCard({
     checkApplicationStatus()
   }, [recommendation.internship_id, authenticated, userId])
 
+  // Track view behavior when component mounts (only once per internship per session)
+  useEffect(() => {
+    const trackView = async () => {
+      if (authenticated && userId) {
+        // Check if we've already tracked this internship in this session
+        const viewedInternships = JSON.parse(localStorage.getItem('viewedInternships') || '[]')
+        const internshipId = recommendation.internship_id
+        
+        if (!viewedInternships.includes(internshipId)) {
+          // Mark as viewed
+          viewedInternships.push(internshipId)
+          localStorage.setItem('viewedInternships', JSON.stringify(viewedInternships))
+          
+          try {
+            await insightsAPI.trackBehavior('view', internshipId, {
+              source: 'recommendations',
+              match_score: recommendation.score,
+              company: recommendation.company,
+              location: recommendation.location
+            })
+          } catch (error) {
+            console.error('Error tracking view behavior:', error)
+          }
+        }
+      }
+    }
+
+    trackView()
+  }, [authenticated, userId, recommendation.internship_id])
+
   // Reset the checked flag when internship ID changes
   useEffect(() => {
     hasCheckedRef.current = false
@@ -92,6 +122,16 @@ export default function RecommendationCard({
           setIsSaved(false)
           toast.success('Removed from saved internships')
           onSaveToggle?.(recommendation.internship_id, false)
+          
+          // Track unsave behavior
+          try {
+            await insightsAPI.trackBehavior('unsave', recommendation.internship_id, {
+              company: recommendation.company,
+              location: recommendation.location
+            })
+          } catch (error) {
+            console.error('Error tracking unsave behavior:', error)
+          }
         }
       } else {
         const result = await internshipAPI.save(recommendation.internship_id)
@@ -99,6 +139,17 @@ export default function RecommendationCard({
           setIsSaved(true)
           toast.success('Added to saved internships')
           onSaveToggle?.(recommendation.internship_id, true)
+          
+          // Track save behavior
+          try {
+            await insightsAPI.trackBehavior('save', recommendation.internship_id, {
+              company: recommendation.company,
+              location: recommendation.location,
+              match_score: recommendation.score
+            })
+          } catch (error) {
+            console.error('Error tracking save behavior:', error)
+          }
         }
       }
     } catch (error) {
@@ -120,6 +171,18 @@ export default function RecommendationCard({
         setIsApplied(true)
         toast.success('Application submitted successfully! 🎉')
         onApplicationSubmitted?.(recommendation.internship_id)
+        
+        // Track apply behavior
+        try {
+          await insightsAPI.trackBehavior('apply', recommendation.internship_id, {
+            company: recommendation.company,
+            location: recommendation.location,
+            match_score: recommendation.score,
+            required_skills: recommendation.required_skills
+          })
+        } catch (error) {
+          console.error('Error tracking apply behavior:', error)
+        }
       } else {
         toast.error(result.message || 'Failed to submit application')
       }
