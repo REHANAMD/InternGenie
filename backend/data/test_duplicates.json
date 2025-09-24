@@ -1,0 +1,26 @@
+[
+  {
+    "title": "Software Development Intern",
+    "company": "TechCorp India",
+    "location": "Bangalore",
+    "description": "Build web applications",
+    "required_skills": "JavaScript, React",
+    "preferred_skills": "Node.js",
+    "duration": "6 months",
+    "stipend": "25000",
+    "min_education": "Bachelor",
+    "experience_required": 0
+  },
+  {
+    "title": "Software Development Intern",
+    "company": "TechCorp India",
+    "location": "Mumbai",
+    "description": "Build mobile apps",
+    "required_skills": "React Native",
+    "preferred_skills": "Flutter",
+    "duration": "4 months",
+    "stipend": "30000",
+    "min_education": "Bachelor",
+    "experience_required": 0
+  }
+]
