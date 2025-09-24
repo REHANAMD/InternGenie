@@ -230,7 +230,7 @@ class Database:
         return created
     
     def seed_internships(self, json_path: str = "data/internships.json"):
-        """Seed internships from JSON file"""
+        """Seed internships from JSON file - clears and reseeds to prevent duplicates"""
         import time
         attempts = 3
         while attempts > 0:
@@ -241,17 +241,18 @@ class Database:
                 conn = self.get_connection()
                 cursor = conn.cursor()
                 
-                # Skip seeding if internships already exist
+                # Get current count for logging
                 cursor.execute('SELECT COUNT(*) FROM internships')
                 count_before = cursor.fetchone()[0]
-                if count_before > 0:
-                    conn.close()
-                    logger.info("Internships already present, skipping seeding")
-                    return True
 
+                # CRITICAL: Clear existing internships to prevent duplicates
+                cursor.execute('DELETE FROM internships')
+                logger.info(f"Cleared {count_before} existing internships to prevent duplicates")
+
+                # Insert fresh data
                 for internship in internships:
                     cursor.execute('''
-                        INSERT OR IGNORE INTO internships 
+                        INSERT INTO internships 
                         (title, company, location, description, required_skills, 
                          preferred_skills, duration, stipend, min_education, experience_required)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -270,7 +271,15 @@ class Database:
                 
                 conn.commit()
                 conn.close()
-                logger.info(f"Seeded {len(internships)} internships")
+                
+                # Get final count
+                conn = self.get_connection()
+                cursor = conn.cursor()
+                cursor.execute('SELECT COUNT(*) FROM internships')
+                count_after = cursor.fetchone()[0]
+                conn.close()
+                
+                logger.info(f"Reseeded internships: cleared {count_before}, added {len(internships)}, now {count_after}")
                 return True
             except sqlite3.OperationalError as e:
                 if 'database is locked' in str(e).lower() and attempts > 1:
@@ -1188,6 +1197,62 @@ class Database:
                 
         except Exception as e:
             logger.error(f"Error during cleanup/migration: {e}")
+
+    def seed_candidates(self, json_path: str = "data/candidates.json"):
+        """Seed candidates from JSON file for collaborative filtering"""
+        try:
+            with open(json_path, 'r') as f:
+                candidates = json.load(f)
+            
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Get current count for logging
+            cursor.execute('SELECT COUNT(*) FROM candidates')
+            count_before = cursor.fetchone()[0]
+            
+            # Insert candidates (ignore if they already exist)
+            added_count = 0
+            for candidate in candidates:
+                try:
+                    # Hash the password
+                    from utils import Utils
+                    password_hash = Utils.hash_password(candidate['password'])
+                    
+                    cursor.execute('''
+                        INSERT OR IGNORE INTO candidates 
+                        (email, password_hash, name, education, skills, location, 
+                         experience_years, phone, linkedin, github)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        candidate['email'],
+                        password_hash,
+                        candidate['name'],
+                        candidate.get('education'),
+                        candidate.get('skills'),
+                        candidate.get('location'),
+                        candidate.get('experience_years', 0),
+                        candidate.get('phone'),
+                        candidate.get('linkedin'),
+                        candidate.get('github')
+                    ))
+                    
+                    if cursor.rowcount > 0:
+                        added_count += 1
+                        
+                except Exception as e:
+                    logger.warning(f"Could not add candidate {candidate['email']}: {e}")
+                    continue
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Seeded candidates: {added_count} new candidates added")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error seeding candidates: {e}")
+            return False
 
 # Initialize database on module import
 if __name__ == "__main__":

@@ -21,5 +21,101 @@
     "experience_years": 1,
     "phone": "9876543211",
     "linkedin": "linkedin.com/in/janesmith"
+  },
+  {
+    "email": "alex.chen@example.com",
+    "password": "password123",
+    "name": "Alex Chen",
+    "education": "Bachelor's",
+    "skills": "Machine Learning, Python, TensorFlow, Data Science, Statistics",
+    "location": "San Francisco",
+    "experience_years": 0,
+    "phone": "9876543212",
+    "linkedin": "linkedin.com/in/alexchen",
+    "github": "github.com/alexchen"
+  },
+  {
+    "email": "sarah.wilson@example.com",
+    "password": "password123",
+    "name": "Sarah Wilson",
+    "education": "Master's",
+    "skills": "Frontend Development, React, JavaScript, CSS, UI/UX Design",
+    "location": "New York",
+    "experience_years": 2,
+    "phone": "9876543213",
+    "linkedin": "linkedin.com/in/sarahwilson",
+    "github": "github.com/sarahwilson"
+  },
+  {
+    "email": "mike.johnson@example.com",
+    "password": "password123",
+    "name": "Mike Johnson",
+    "education": "Bachelor's",
+    "skills": "Backend Development, Node.js, Python, AWS, Database Design",
+    "location": "Seattle",
+    "experience_years": 1,
+    "phone": "9876543214",
+    "linkedin": "linkedin.com/in/mikejohnson",
+    "github": "github.com/mikejohnson"
+  },
+  {
+    "email": "emma.davis@example.com",
+    "password": "password123",
+    "name": "Emma Davis",
+    "education": "Master's",
+    "skills": "Data Science, R, Python, Machine Learning, Statistics, Tableau",
+    "location": "London",
+    "experience_years": 0,
+    "phone": "9876543215",
+    "linkedin": "linkedin.com/in/emmadavis",
+    "github": "github.com/emmadavis"
+  },
+  {
+    "email": "david.brown@example.com",
+    "password": "password123",
+    "name": "David Brown",
+    "education": "Bachelor's",
+    "skills": "Mobile Development, React Native, iOS, Android, Swift, Kotlin",
+    "location": "Austin",
+    "experience_years": 1,
+    "phone": "9876543216",
+    "linkedin": "linkedin.com/in/davidbrown",
+    "github": "github.com/davidbrown"
+  },
+  {
+    "email": "lisa.garcia@example.com",
+    "password": "password123",
+    "name": "Lisa Garcia",
+    "education": "Master's",
+    "skills": "DevOps, Docker, Kubernetes, CI/CD, AWS, Linux, Automation",
+    "location": "Berlin",
+    "experience_years": 2,
+    "phone": "9876543217",
+    "linkedin": "linkedin.com/in/lisagarcia",
+    "github": "github.com/lisagarcia"
+  },
+  {
+    "email": "ryan.taylor@example.com",
+    "password": "password123",
+    "name": "Ryan Taylor",
+    "education": "Bachelor's",
+    "skills": "Full Stack Development, MERN Stack, MongoDB, Express, React, Node.js",
+    "location": "Toronto",
+    "experience_years": 0,
+    "phone": "9876543218",
+    "linkedin": "linkedin.com/in/ryantaylor",
+    "github": "github.com/ryantaylor"
+  },
+  {
+    "email": "sophie.martin@example.com",
+    "password": "password123",
+    "name": "Sophie Martin",
+    "education": "Master's",
+    "skills": "Cybersecurity, Ethical Hacking, Network Security, Python, Linux",
+    "location": "Paris",
+    "experience_years": 1,
+    "phone": "9876543219",
+    "linkedin": "linkedin.com/in/sophiemartin",
+    "github": "github.com/sophiemartin"
   }
 ]

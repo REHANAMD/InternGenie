@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence, PanInfo } from 'framer-motion'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import RecommendationCard from './RecommendationCard'
+import CollaborativeInsights from './CollaborativeInsights'
 import { Recommendation } from '@/lib/api'
 
 interface RecommendationCarouselProps {
@@ -113,6 +114,16 @@ export default function RecommendationCarousel({
           >
             <div className="h-full flex items-center justify-center p-8">
               <div className="w-full max-w-4xl">
+                {/* Collaborative Insights for current card */}
+                <div className="mb-4">
+                  <CollaborativeInsights
+                    internshipId={recommendations[currentIndex].internship_id}
+                    company={recommendations[currentIndex].company}
+                    title={recommendations[currentIndex].title}
+                    requiredSkills={recommendations[currentIndex].required_skills}
+                  />
+                </div>
+                
                 <RecommendationCard
                   recommendation={recommendations[currentIndex]}
                   onSaveToggle={onSaveToggle}

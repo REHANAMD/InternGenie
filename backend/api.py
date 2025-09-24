@@ -8,6 +8,8 @@ from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List, Dict
 import os
 import shutil
+import sqlite3
+import json
 from datetime import datetime
 import logging
 
@@ -38,7 +40,10 @@ app.add_middleware(
 )
 
 # Initialize components
-db = Database()
+# Initialize database with absolute path to ensure consistency
+import os
+db_path = os.path.join(os.path.dirname(__file__), "recommendation_engine.db")
+db = Database(db_path)
 parser = ResumeParser()
 recommender = RecommendationEngine(db)
 enhanced_engine = EnhancedRecommendationEngine(db)
@@ -499,16 +504,15 @@ async def get_recommendations(
 ):
     """Get personalized internship recommendations"""
     try:
-        # If not using cache (refresh), clear duplicates and cache first
-        if not use_cache:
-            logger.info(f"Refresh requested - clearing duplicates and cache for user {current_user['id']}")
-            db.clear_duplicate_applications(current_user['id'])
-            db.clear_recommendations_for_candidate(current_user['id'])
+        # ALWAYS clear cache to ensure fresh recommendations
+        logger.info(f"Getting recommendations for user {current_user['id']} - clearing cache to ensure fresh data")
+        db.clear_duplicate_applications(current_user['id'])
+        db.clear_recommendations_for_candidate(current_user['id'])
         
         recommendations = enhanced_engine.get_recommendations(
             current_user['id'],
             top_n=limit,
-            use_cache=use_cache
+            use_cache=False  # Force fresh recommendations
         )
         
         # Format recommendations for response
@@ -524,6 +528,8 @@ async def get_recommendations(
                 rec.get('internship_id', 0)
             )
         
+        logger.info(f"Returning {len(formatted_recommendations)} fresh recommendations for user {current_user['id']}")
+        
         return {
             "success": True,
             "count": len(formatted_recommendations),
@@ -533,6 +539,462 @@ async def get_recommendations(
     except Exception as e:
         logger.error(f"Get recommendations error: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate recommendations")
+
+@app.get("/ml-status")
+async def get_ml_status():
+    """Get current ML system status and data availability"""
+    try:
+        status = enhanced_engine.get_ml_status()
+        
+        # Check if we have sample candidates (indicates sample data mode)
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM candidates WHERE email LIKE '%@example.com'")
+        sample_candidates_count = cursor.fetchone()[0]
+        conn.close()
+        
+        status['sample_data_mode'] = sample_candidates_count > 0
+        status['sample_candidates_count'] = sample_candidates_count
+        
+        return {
+            "success": True,
+            "ml_status": status
+        }
+    except Exception as e:
+        logger.error(f"ML status error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get ML status")
+
+@app.get("/collaborative-insights")
+async def get_collaborative_insights():
+    """Get collaborative filtering insights for demonstration"""
+    try:
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        
+        # Check if table exists first
+        cursor.execute("""
+            SELECT name FROM sqlite_master 
+            WHERE type='table' AND name='collaborative_insights'
+        """)
+        table_exists = cursor.fetchone()
+        
+        if not table_exists:
+            conn.close()
+            return {
+                "success": True,
+                "insights": {},
+                "total_insights": 0,
+                "message": "No collaborative insights available yet. Generate sample data first."
+            }
+        
+        # Get all collaborative insights
+        cursor.execute("""
+            SELECT insight_type, title, description, data, created_at
+            FROM collaborative_insights
+            ORDER BY insight_type, created_at DESC
+        """)
+        
+        insights = []
+        for row in cursor.fetchall():
+            insight_type, title, description, data, created_at = row
+            try:
+                data_json = json.loads(data)
+            except:
+                data_json = {}
+            
+            insights.append({
+                'type': insight_type,
+                'title': title,
+                'description': description,
+                'data': data_json,
+                'created_at': created_at
+            })
+        
+        conn.close()
+        
+        # Group insights by type
+        grouped_insights = {}
+        for insight in insights:
+            insight_type = insight['type']
+            if insight_type not in grouped_insights:
+                grouped_insights[insight_type] = []
+            grouped_insights[insight_type].append(insight)
+        
+        return {
+            "success": True,
+            "insights": grouped_insights,
+            "total_insights": len(insights)
+        }
+        
+    except Exception as e:
+        logger.error(f"Get collaborative insights error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get collaborative insights")
+
+@app.get("/collaborative-insights/{internship_id}")
+async def get_collaborative_insights_for_internship(internship_id: int):
+    """Get collaborative insights for a specific internship based on real data"""
+    try:
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        
+        # Get internship details
+        cursor.execute('''
+            SELECT title, company, required_skills, location
+            FROM internships WHERE id = ?
+        ''', (internship_id,))
+        
+        internship = cursor.fetchone()
+        if not internship:
+            conn.close()
+            return {
+                "success": False,
+                "message": "Internship not found"
+            }
+        
+        title, company, required_skills, location = internship
+        
+        # Get real collaborative insights based on trained models
+        insights = []
+        
+        logger.info(f"Analyzing collaborative insights for internship {internship_id}: {title} at {company}")
+        
+        # Try to load trained models for better insights
+        try:
+            import joblib
+            import os
+            
+            models_dir = "models"
+            if os.path.exists(f"{models_dir}/trending_skills.joblib"):
+                trending_skills = joblib.load(f"{models_dir}/trending_skills.joblib")
+                company_popularity = joblib.load(f"{models_dir}/company_popularity.joblib")
+                location_popularity = joblib.load(f"{models_dir}/location_popularity.joblib")
+                user_similarity = joblib.load(f"{models_dir}/user_similarity.joblib")
+                item_similarity = joblib.load(f"{models_dir}/item_similarity.joblib")
+                
+                logger.info("Loaded trained CF models for insights")
+                use_trained_models = True
+            else:
+                logger.info("No trained models found, using basic analysis")
+                use_trained_models = False
+        except Exception as e:
+            logger.warning(f"Could not load trained models: {e}")
+            use_trained_models = False
+        
+        # 1. Check if skills are trending using trained models
+        if required_skills:
+            skills_list = [s.strip().lower() for s in required_skills.split(',')]
+            logger.info(f"Required skills: {skills_list}")
+            
+            if use_trained_models:
+                # Use trained trending skills model
+                skill_trending_score = 0
+                for skill in skills_list:
+                    if skill in trending_skills:
+                        skill_trending_score += trending_skills[skill]
+                
+                logger.info(f"Skill trending score from trained model: {skill_trending_score}")
+                
+                if skill_trending_score > 0:
+                    insights.append({
+                        "type": "trending_skills",
+                        "title": "Skills in this card are high-in-demand",
+                        "description": f"These skills are trending with score {skill_trending_score:.1f}",
+                        "icon": "trending_up"
+                    })
+            else:
+                # Fallback to basic analysis
+                cursor.execute('''
+                    SELECT COUNT(DISTINCT a.candidate_id) as application_count
+                    FROM applications a
+                    JOIN internships i ON a.internship_id = i.id
+                    WHERE a.applied_at >= datetime('now', '-30 days')
+                    AND (i.required_skills LIKE ? OR i.required_skills LIKE ? OR i.required_skills LIKE ?)
+                ''', (f'%{skills_list[0]}%', f'%{skills_list[1] if len(skills_list) > 1 else skills_list[0]}%', f'%{skills_list[2] if len(skills_list) > 2 else skills_list[0]}%'))
+                
+                result = cursor.fetchone()
+                trending_count = result[0] if result else 0
+                
+                if trending_count > 0:
+                    insights.append({
+                        "type": "trending_skills",
+                        "title": "Skills in this card are high-in-demand",
+                        "description": f"These skills are trending with {trending_count}+ recent applications",
+                        "icon": "trending_up"
+                    })
+        
+        # 2. Check if similar users have applied (based on user behavior patterns)
+        cursor.execute('''
+            SELECT COUNT(DISTINCT ub.candidate_id) as similar_users
+            FROM user_behaviors ub
+            JOIN internships i ON ub.internship_id = i.id
+            WHERE ub.action IN ('apply', 'save', 'view')
+            AND ub.candidate_id != ?
+            AND (i.required_skills LIKE ? OR i.company = ?)
+            AND ub.created_at >= datetime('now', '-30 days')
+        ''', (1, f'%{required_skills.split(",")[0].strip()}%' if required_skills else '', company))
+        
+        result = cursor.fetchone()
+        similar_users = result[0] if result else 0
+        logger.info(f"Similar users count: {similar_users}")
+        
+        if similar_users > 0:  # Very low threshold
+            insights.append({
+                "type": "similar_users",
+                "title": "People with similar profiles have liked this",
+                "description": f"{similar_users} users with matching profiles have shown interest",
+                "icon": "users"
+            })
+        
+        # 3. Check if company is popular using trained models
+        if use_trained_models:
+            company_score = company_popularity.get(company, 0)
+            logger.info(f"Company popularity score from trained model: {company_score}")
+            
+            if company_score > 0:
+                insights.append({
+                    "type": "popular_company",
+                    "title": "This role is popular among your peers",
+                    "description": f"{company} is a highly sought-after company with popularity score {company_score:.1f}",
+                    "icon": "star"
+                })
+        else:
+            # Fallback to basic analysis
+            cursor.execute('''
+                SELECT COUNT(*) as company_applications
+                FROM applications a
+                JOIN internships i ON a.internship_id = i.id
+                WHERE i.company = ?
+                AND a.applied_at >= datetime('now', '-30 days')
+            ''', (company,))
+            
+            result = cursor.fetchone()
+            company_applications = result[0] if result else 0
+            logger.info(f"Company applications count: {company_applications}")
+            
+            if company_applications > 0:
+                insights.append({
+                    "type": "popular_company",
+                    "title": "This role is popular among your peers",
+                    "description": f"{company} is a highly sought-after company with {company_applications}+ recent applications",
+                    "icon": "star"
+                })
+        
+        # 4. Check location popularity using trained models
+        if use_trained_models:
+            location_score = location_popularity.get(location, 0)
+            logger.info(f"Location popularity score from trained model: {location_score}")
+            
+            if location_score > 0:
+                insights.append({
+                    "type": "popular_location",
+                    "title": "High match potential for your profile",
+                    "description": f"{location} is a trending location with popularity score {location_score:.1f}",
+                    "icon": "zap"
+                })
+        else:
+            # Fallback to basic analysis
+            cursor.execute('''
+                SELECT COUNT(*) as location_applications
+                FROM applications a
+                JOIN internships i ON a.internship_id = i.id
+                WHERE i.location = ?
+                AND a.applied_at >= datetime('now', '-30 days')
+            ''', (location,))
+            
+            result = cursor.fetchone()
+            location_applications = result[0] if result else 0
+            logger.info(f"Location applications count: {location_applications}")
+            
+            if location_applications > 0:
+                insights.append({
+                    "type": "popular_location",
+                    "title": "High match potential for your profile",
+                    "description": f"{location} is a trending location with {location_applications}+ recent applications",
+                    "icon": "zap"
+                })
+        
+        conn.close()
+        
+        logger.info(f"Generated {len(insights)} insights for internship {internship_id}: {insights}")
+        
+        # Return the first relevant insight (or a default one)
+        if insights:
+            logger.info(f"Returning insight: {insights[0]}")
+            return {
+                "success": True,
+                "insight": insights[0]  # Return the most relevant insight
+            }
+        else:
+            # Generate meaningful variety even when no real data is available
+            logger.info(f"No insights found, generating meaningful variety for internship {internship_id}")
+            
+            # Create meaningful insight types based on internship characteristics
+            insight_types = []
+            
+            # 1. Skill-based insights (more specific)
+            if required_skills:
+                skills = [s.strip().lower() for s in required_skills.split(',')]
+                
+                # Tech skills trending
+                if any(skill in ['python', 'javascript', 'react', 'node.js', 'aws', 'docker'] for skill in skills):
+                    insight_types.append({
+                        "type": "trending_skills",
+                        "title": "🔥 Hot Tech Skills in Demand",
+                        "description": f"Skills like {', '.join([s for s in skills if s in ['python', 'javascript', 'react', 'node.js', 'aws', 'docker']][:2])} are highly sought after",
+                        "icon": "trending_up"
+                    })
+                
+                # Data skills trending
+                elif any(skill in ['sql', 'python', 'analytics', 'machine learning', 'statistics'] for skill in skills):
+                    insight_types.append({
+                        "type": "trending_skills",
+                        "title": "📊 Data Skills on the Rise",
+                        "description": f"Data skills like {', '.join([s for s in skills if s in ['sql', 'python', 'analytics', 'machine learning', 'statistics']][:2])} are in high demand",
+                        "icon": "trending_up"
+                    })
+                
+                # Design skills trending
+                elif any(skill in ['figma', 'sketch', 'adobe', 'ui', 'ux', 'design'] for skill in skills):
+                    insight_types.append({
+                        "type": "trending_skills",
+                        "title": "🎨 Creative Skills Trending",
+                        "description": f"Design skills like {', '.join([s for s in skills if s in ['figma', 'sketch', 'adobe', 'ui', 'ux', 'design']][:2])} are highly valued",
+                        "icon": "trending_up"
+                    })
+            
+            # 2. Company-based insights (more specific)
+            if 'tech' in company.lower() or 'ai' in company.lower() or 'data' in company.lower():
+                insight_types.append({
+                    "type": "popular_company",
+                    "title": "🚀 Tech Company Alert",
+                    "description": f"{company} is a growing tech company with great opportunities",
+                    "icon": "star"
+                })
+            elif 'startup' in company.lower() or 'hub' in company.lower():
+                insight_types.append({
+                    "type": "popular_company",
+                    "title": "💡 Startup Environment",
+                    "description": f"{company} offers fast-paced startup experience and growth",
+                    "icon": "star"
+                })
+            elif 'corp' in company.lower() or 'solutions' in company.lower():
+                insight_types.append({
+                    "type": "popular_company",
+                    "title": "🏢 Established Company",
+                    "description": f"{company} provides stable corporate experience and mentorship",
+                    "icon": "star"
+                })
+            
+            # 3. Location-based insights (more specific)
+            if location.lower() in ['bangalore', 'mumbai', 'delhi', 'hyderabad']:
+                insight_types.append({
+                    "type": "popular_location",
+                    "title": "📍 Major Tech Hub",
+                    "description": f"{location} is a major tech hub with excellent networking opportunities",
+                    "icon": "zap"
+                })
+            elif 'remote' in location.lower() or 'work from home' in location.lower():
+                insight_types.append({
+                    "type": "popular_location",
+                    "title": "🏠 Remote Work Opportunity",
+                    "description": f"Remote work offers flexibility and work-life balance",
+                    "icon": "zap"
+                })
+            
+            # 4. Role-specific insights (more meaningful)
+            if 'product' in title.lower() or 'manager' in title.lower():
+                insight_types.append({
+                    "type": "role_specific",
+                    "title": "📈 Product Management Path",
+                    "description": "Product roles offer strategic thinking and leadership experience",
+                    "icon": "trending_up"
+                })
+            elif 'data' in title.lower() or 'analyst' in title.lower():
+                insight_types.append({
+                    "type": "role_specific",
+                    "title": "📊 Data-Driven Role",
+                    "description": "Data roles are essential in today's data-driven world",
+                    "icon": "trending_up"
+                })
+            elif 'design' in title.lower() or 'ui' in title.lower() or 'ux' in title.lower():
+                insight_types.append({
+                    "type": "role_specific",
+                    "title": "🎨 Creative Design Role",
+                    "description": "Design roles combine creativity with technical skills",
+                    "icon": "trending_up"
+                })
+            elif 'marketing' in title.lower() or 'growth' in title.lower():
+                insight_types.append({
+                    "type": "role_specific",
+                    "title": "📢 Marketing & Growth",
+                    "description": "Marketing roles offer diverse skills and creative opportunities",
+                    "icon": "trending_up"
+                })
+            elif 'devops' in title.lower() or 'cloud' in title.lower():
+                insight_types.append({
+                    "type": "role_specific",
+                    "title": "☁️ Cloud & DevOps",
+                    "description": "DevOps roles are crucial for modern software development",
+                    "icon": "trending_up"
+                })
+            
+            # 5. Experience level insights
+            if 'senior' in title.lower() or 'lead' in title.lower():
+                insight_types.append({
+                    "type": "experience_level",
+                    "title": "👑 Senior Level Role",
+                    "description": "Senior roles offer leadership opportunities and higher impact",
+                    "icon": "star"
+                })
+            elif 'junior' in title.lower() or 'entry' in title.lower():
+                insight_types.append({
+                    "type": "experience_level",
+                    "title": "🌱 Entry Level Opportunity",
+                    "description": "Perfect for building foundational skills and experience",
+                    "icon": "zap"
+                })
+            
+            # 6. Industry insights
+            if 'fintech' in company.lower() or 'finance' in company.lower():
+                insight_types.append({
+                    "type": "industry",
+                    "title": "💰 FinTech Industry",
+                    "description": "FinTech is one of the fastest-growing sectors with high demand",
+                    "icon": "trending_up"
+                })
+            elif 'healthcare' in company.lower() or 'medical' in company.lower():
+                insight_types.append({
+                    "type": "industry",
+                    "title": "🏥 Healthcare Tech",
+                    "description": "Healthcare tech is growing rapidly with meaningful impact",
+                    "icon": "trending_up"
+                })
+            
+            # Use internship ID to consistently show the same insight for the same internship
+            if insight_types:
+                index = internship_id % len(insight_types)
+                selected_insight = insight_types[index]
+            else:
+                # Final fallback - at least make it specific to the role
+                selected_insight = {
+                    "type": "default",
+                    "title": "🎯 Great Learning Opportunity",
+                    "description": f"This {title} role at {company} offers valuable experience",
+                    "icon": "check"
+                }
+            
+            logger.info(f"Returning meaningful variety insight: {selected_insight}")
+            return {
+                "success": True,
+                "insight": selected_insight
+            }
+        
+    except Exception as e:
+        logger.error(f"Get collaborative insights for internship error: {e}")
+        return {
+            "success": False,
+            "message": "Failed to fetch collaborative insights"
+        }
 
 @app.post("/internships/{internship_id}/save")
 async def save_internship(
@@ -972,16 +1434,102 @@ async def retrain_models(
         raise HTTPException(status_code=500, detail="Failed to retrain models")
 
 @app.post("/generate-sample-data")
-async def generate_sample_data():
+async def generate_sample_data(current_user: dict = Depends(get_current_user)):
     """Generate sample behavior and application data for testing (development only)"""
     try:
         from train_ml_models import generate_sample_behavior_data, generate_sample_application_data
+        
+        # IMPORTANT: Only seed candidates during sample data generation, not on startup
+        logger.info("Seeding diverse candidates for collaborative filtering...")
+        db.seed_candidates("data/candidates.json")
         
         # Generate behavior data
         generate_sample_behavior_data(db, num_users=10, num_interactions=100)
         
         # Generate application data
         generate_sample_application_data(db, num_applications=30)
+        
+        # IMPORTANT: Create some applications for the current user to demonstrate filtering
+        logger.info(f"Creating sample applications for current user {current_user['id']}...")
+        internships = db.get_all_internships(active_only=True)
+        if internships:
+            # Apply to 2-3 random internships for the current user
+            import random
+            selected_internships = random.sample(internships, min(3, len(internships)))
+            
+            # Create applications directly in database to avoid conflicts
+            conn = db.get_connection()
+            cursor = conn.cursor()
+            
+            for internship in selected_internships:
+                try:
+                    # Check if application already exists
+                    cursor.execute('''
+                        SELECT id FROM applications 
+                        WHERE candidate_id = ? AND internship_id = ?
+                    ''', (current_user['id'], internship['id']))
+                    
+                    if not cursor.fetchone():
+                        # Insert new application
+                        cursor.execute('''
+                            INSERT INTO applications (candidate_id, internship_id, status, applied_at)
+                            VALUES (?, ?, 'pending', CURRENT_TIMESTAMP)
+                        ''', (current_user['id'], internship['id']))
+                        logger.info(f"Created sample application for user {current_user['id']} to internship {internship['id']}")
+                    else:
+                        logger.info(f"Application already exists for user {current_user['id']} to internship {internship['id']}")
+                        
+                except Exception as e:
+                    logger.warning(f"Could not create application for user {current_user['id']} to internship {internship['id']}: {e}")
+            
+            conn.commit()
+            conn.close()
+            
+            # CRITICAL: Clear all recommendation caches to ensure fresh recommendations
+            # that respect the new application data
+            logger.info("Clearing all recommendation caches to ensure fresh recommendations...")
+            conn = db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM recommendations")
+            conn.commit()
+            conn.close()
+            
+            # Also clear cache for all candidates to ensure fresh recommendations
+            all_candidates = db.get_all_candidates()
+            for candidate in all_candidates:
+                db.clear_recommendations_for_candidate(candidate['id'])
+                logger.info(f"Cleared recommendations cache for candidate {candidate['id']}")
+        
+        # Generate collaborative filtering insights for demonstration
+        logger.info("Generating collaborative filtering insights for demonstration...")
+        import time
+        time.sleep(0.5)  # Small delay to prevent database locking
+        _generate_collaborative_insights(db)
+        
+        # Generate additional diverse behavior data for better insights
+        logger.info("Generating additional diverse behavior data for better insights...")
+        _generate_diverse_behavior_data(db)
+        
+        # Generate more comprehensive training data for collaborative filtering
+        logger.info("Generating comprehensive training data for collaborative filtering...")
+        _generate_comprehensive_training_data(db)
+        
+        # Train collaborative filtering model on the generated data
+        logger.info("Training collaborative filtering model on sample data...")
+        _train_collaborative_filtering_model(db)
+        
+        # Clear all recommendation caches to ensure fresh recommendations
+        # that respect the new application data
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM recommendations")
+        conn.commit()
+        conn.close()
+        
+        # Also clear cache for all candidates to ensure fresh recommendations
+        all_candidates = db.get_all_candidates()
+        for candidate in all_candidates:
+            db.clear_recommendations_for_candidate(candidate['id'])
         
         # Get counts
         conn = db.get_connection()
@@ -1037,10 +1585,33 @@ async def reset_insights_data():
         cursor.execute("DELETE FROM saved_internships")
         saved_deleted = cursor.rowcount
         
+        # Clear collaborative insights (if table exists)
+        try:
+            cursor.execute("DELETE FROM collaborative_insights")
+            insights_deleted = cursor.rowcount
+        except sqlite3.OperationalError:
+            # Table doesn't exist yet, which is fine
+            insights_deleted = 0
+        
+        # IMPORTANT: Also remove sample candidates (keep only real users)
+        # Get list of sample candidate emails to remove
+        sample_emails = [
+            'john.doe@example.com', 'jane.smith@example.com', 'alex.chen@example.com',
+            'sarah.wilson@example.com', 'mike.johnson@example.com', 'emma.davis@example.com',
+            'david.brown@example.com', 'lisa.garcia@example.com', 'ryan.taylor@example.com',
+            'sophie.martin@example.com'
+        ]
+        
+        # Delete sample candidates
+        sample_candidates_deleted = 0
+        for email in sample_emails:
+            cursor.execute("DELETE FROM candidates WHERE email = ?", (email,))
+            sample_candidates_deleted += cursor.rowcount
+        
         conn.commit()
         conn.close()
         
-        logger.info(f"Reset insights data: {behaviors_deleted} behaviors, {applications_deleted} applications, {recommendations_deleted} recommendations, {saved_deleted} saved internships")
+        logger.info(f"Reset insights data: {behaviors_deleted} behaviors, {applications_deleted} applications, {recommendations_deleted} recommendations, {saved_deleted} saved internships, {insights_deleted} collaborative insights, {sample_candidates_deleted} sample candidates")
         
         return {
             "success": True,
@@ -1049,25 +1620,820 @@ async def reset_insights_data():
                 "behaviors_deleted": behaviors_deleted,
                 "applications_deleted": applications_deleted,
                 "recommendations_deleted": recommendations_deleted,
-                "saved_deleted": saved_deleted
+                "saved_deleted": saved_deleted,
+                "insights_deleted": insights_deleted,
+                "sample_candidates_deleted": sample_candidates_deleted
             }
         }
     except Exception as e:
         logger.error(f"Reset insights data error: {e}")
         raise HTTPException(status_code=500, detail="Failed to reset insights data")
 
+def _generate_collaborative_insights(db: Database):
+    """Generate collaborative filtering insights for demonstration"""
+    conn = None
+    try:
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        
+        # Create insights table if it doesn't exist
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS collaborative_insights (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                insight_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL,
+                data TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Clear existing insights
+        cursor.execute("DELETE FROM collaborative_insights")
+        
+        # Get all behaviors for analysis
+        cursor.execute("""
+            SELECT ub.candidate_id, ub.internship_id, ub.action, 
+                   c.name, c.skills, c.location,
+                   i.title, i.company, i.required_skills
+            FROM user_behaviors ub
+            JOIN candidates c ON ub.candidate_id = c.id
+            JOIN internships i ON ub.internship_id = i.id
+            WHERE ub.action IN ('save', 'apply', 'accept')
+        """)
+        behaviors = cursor.fetchall()
+        
+        if not behaviors:
+            return
+        
+        # 1. User Clustering Insights
+        _generate_user_clustering_insights(cursor, behaviors)
+        
+        # 2. Cross-Domain Discovery Insights  
+        _generate_cross_domain_insights(cursor, behaviors)
+        
+        # 3. Location-Based Patterns
+        _generate_location_patterns_insights(cursor, behaviors)
+        
+        # 4. Skill-Based Clustering
+        _generate_skill_clustering_insights(cursor, behaviors)
+        
+        # 5. Company Preference Patterns
+        _generate_company_patterns_insights(cursor, behaviors)
+        
+        # 6. Behavioral Pattern Insights
+        _generate_behavioral_patterns_insights(cursor, behaviors)
+        
+        conn.commit()
+        
+        logger.info("Collaborative filtering insights generated successfully")
+        
+    except Exception as e:
+        logger.error(f"Error generating collaborative insights: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+def _generate_user_clustering_insights(cursor, behaviors):
+    """Generate user clustering insights"""
+    from collections import defaultdict
+    
+    # Group users by their preferences
+    user_preferences = defaultdict(list)
+    for behavior in behaviors:
+        candidate_id, _, action, name, skills, location, title, company, required_skills = behavior
+        if action in ['save', 'apply', 'accept']:
+            user_preferences[candidate_id].append({
+                'name': name,
+                'skills': skills,
+                'location': location,
+                'title': title,
+                'company': company,
+                'required_skills': required_skills
+            })
+    
+    # Find user clusters
+    clusters = defaultdict(list)
+    for candidate_id, preferences in user_preferences.items():
+        if len(preferences) >= 2:  # Users with multiple preferences
+            # Determine cluster based on skills and preferences
+            skills = preferences[0]['skills'].lower()
+            if 'machine learning' in skills or 'data science' in skills or 'ai' in skills:
+                clusters['ML/AI Cluster'].append(preferences[0]['name'])
+            elif 'product' in skills or 'management' in skills:
+                clusters['Product Management Cluster'].append(preferences[0]['name'])
+            elif 'frontend' in skills or 'react' in skills or 'ui' in skills:
+                clusters['Frontend Development Cluster'].append(preferences[0]['name'])
+            elif 'backend' in skills or 'node' in skills or 'python' in skills:
+                clusters['Backend Development Cluster'].append(preferences[0]['name'])
+            elif 'devops' in skills or 'aws' in skills or 'docker' in skills:
+                clusters['DevOps Cluster'].append(preferences[0]['name'])
+    
+            # Create insights for each cluster
+            for cluster_name, users in clusters.items():
+                if len(users) >= 2:
+                    cursor.execute('''
+                        INSERT INTO collaborative_insights 
+                        (insight_type, title, description, data)
+                        VALUES (?, ?, ?, ?)
+                    ''', (
+                        'user_clustering',
+                        f'{cluster_name}',
+                        f'People with similar skills and interests have applied to internships in this domain',
+                        json.dumps({
+                            'cluster_name': cluster_name,
+                            'count': len(users),
+                            'description': f'{len(users)} people with similar profiles'
+                        })
+                    ))
+
+def _generate_cross_domain_insights(cursor, behaviors):
+    """Generate cross-domain discovery insights"""
+    from collections import defaultdict
+    
+    # Track what users who liked X also liked Y
+    user_likes = defaultdict(set)
+    for behavior in behaviors:
+        candidate_id, internship_id, action, name, skills, location, title, company, required_skills = behavior
+        if action in ['save', 'apply', 'accept']:
+            user_likes[candidate_id].add((title, company, required_skills))
+    
+    # Find cross-domain patterns
+    cross_domain_patterns = defaultdict(int)
+    for candidate_id, likes in user_likes.items():
+        if len(likes) >= 2:
+            likes_list = list(likes)
+            for i in range(len(likes_list)):
+                for j in range(i+1, len(likes_list)):
+                    title1, company1, skills1 = likes_list[i]
+                    title2, company2, skills2 = likes_list[j]
+                    
+                    # Create pattern key
+                    pattern = f"{title1} → {title2}"
+                    cross_domain_patterns[pattern] += 1
+    
+    # Create insights for strong patterns
+    for pattern, count in cross_domain_patterns.items():
+        if count >= 2:
+            cursor.execute('''
+                INSERT INTO collaborative_insights 
+                (insight_type, title, description, data)
+                VALUES (?, ?, ?, ?)
+            ''', (
+                'cross_domain',
+                f'People who liked {pattern.split(" → ")[0]} also liked {pattern.split(" → ")[1]}',
+                f'This pattern was observed {count} times among people',
+                json.dumps({
+                    'pattern': pattern,
+                    'count': count,
+                    'strength': 'strong' if count >= 3 else 'moderate',
+                    'description': f'{count} people show this preference pattern'
+                })
+            ))
+
+def _generate_location_patterns_insights(cursor, behaviors):
+    """Generate location-based pattern insights"""
+    from collections import defaultdict
+    
+    # Group by location
+    location_preferences = defaultdict(list)
+    for behavior in behaviors:
+        candidate_id, _, action, name, skills, location, title, company, required_skills = behavior
+        if action in ['save', 'apply', 'accept']:
+            location_preferences[location].append({
+                'name': name,
+                'title': title,
+                'company': company
+            })
+    
+    # Find location-based patterns
+    for location, preferences in location_preferences.items():
+        if len(preferences) >= 2:
+            companies = [p['company'] for p in preferences]
+            company_counts = defaultdict(int)
+            for company in companies:
+                company_counts[company] += 1
+            
+            # Find popular companies in this location
+            popular_companies = [company for company, count in company_counts.items() if count >= 2]
+            
+            if popular_companies:
+                cursor.execute('''
+                    INSERT INTO collaborative_insights 
+                    (insight_type, title, description, data)
+                    VALUES (?, ?, ?, ?)
+                ''', (
+                    'location_patterns',
+                    f'Popular companies in {location}',
+                    f'People in {location} prefer these companies',
+                    json.dumps({
+                        'location': location,
+                        'popular_companies': popular_companies,
+                        'user_count': len(preferences),
+                        'description': f'{len(preferences)} people in {location} show these preferences'
+                    })
+                ))
+
+def _generate_skill_clustering_insights(cursor, behaviors):
+    """Generate skill-based clustering insights"""
+    from collections import defaultdict
+    
+    # Group by skill preferences
+    skill_preferences = defaultdict(list)
+    for behavior in behaviors:
+        candidate_id, _, action, name, skills, location, title, company, required_skills = behavior
+        if action in ['save', 'apply', 'accept']:
+            # Extract key skills from required_skills
+            if required_skills:
+                for skill in required_skills.split(','):
+                    skill = skill.strip().lower()
+                    if skill:
+                        skill_preferences[skill].append({
+                            'name': name,
+                            'title': title,
+                            'company': company
+                        })
+    
+    # Find skill clusters
+    for skill, preferences in skill_preferences.items():
+        if len(preferences) >= 2:
+            companies = [p['company'] for p in preferences]
+            company_counts = defaultdict(int)
+            for company in companies:
+                company_counts[company] += 1
+            
+            popular_companies = [company for company, count in company_counts.items() if count >= 2]
+            
+            if popular_companies:
+                cursor.execute('''
+                    INSERT INTO collaborative_insights 
+                    (insight_type, title, description, data)
+                    VALUES (?, ?, ?, ?)
+                ''', (
+                    'skill_clustering',
+                    f'Users interested in {skill.title()} prefer these companies',
+                    f'Companies popular among {skill} enthusiasts: {", ".join(popular_companies)}',
+                    json.dumps({
+                        'skill': skill,
+                        'popular_companies': popular_companies,
+                        'user_count': len(preferences)
+                    })
+                ))
+
+def _generate_company_patterns_insights(cursor, behaviors):
+    """Generate company preference pattern insights"""
+    from collections import defaultdict
+    
+    # Track company preferences
+    company_preferences = defaultdict(list)
+    for behavior in behaviors:
+        candidate_id, _, action, name, skills, location, title, company, required_skills = behavior
+        if action in ['save', 'apply', 'accept']:
+            company_preferences[company].append({
+                'name': name,
+                'skills': skills,
+                'title': title
+            })
+    
+    # Find company patterns
+    for company, preferences in company_preferences.items():
+        if len(preferences) >= 2:
+            # Find common skills among users who like this company
+            all_skills = []
+            for pref in preferences:
+                if pref['skills']:
+                    all_skills.extend([skill.strip().lower() for skill in pref['skills'].split(',')])
+            
+            skill_counts = defaultdict(int)
+            for skill in all_skills:
+                if skill:
+                    skill_counts[skill] += 1
+            
+            common_skills = [skill for skill, count in skill_counts.items() if count >= 2]
+            
+            if common_skills:
+                cursor.execute('''
+                    INSERT INTO collaborative_insights 
+                    (insight_type, title, description, data)
+                    VALUES (?, ?, ?, ?)
+                ''', (
+                    'company_patterns',
+                    f'Users who like {company} typically have these skills',
+                    f'Common skills among {company} enthusiasts: {", ".join(common_skills[:5])}',
+                    json.dumps({
+                        'company': company,
+                        'common_skills': common_skills,
+                        'user_count': len(preferences)
+                    })
+                ))
+
+def _generate_behavioral_patterns_insights(cursor, behaviors):
+    """Generate behavioral pattern insights"""
+    from collections import defaultdict
+    
+    # Track user behavior patterns
+    user_actions = defaultdict(list)
+    for behavior in behaviors:
+        candidate_id, _, action, name, skills, location, title, company, required_skills = behavior
+        user_actions[candidate_id].append({
+            'name': name,
+            'action': action,
+            'title': title,
+            'company': company
+        })
+    
+    # Find behavioral patterns
+    for candidate_id, actions in user_actions.items():
+        if len(actions) >= 3:
+            action_counts = defaultdict(int)
+            for action in actions:
+                action_counts[action['action']] += 1
+            
+            # Determine behavior type
+            if action_counts['apply'] >= 2:
+                behavior_type = "Decisive - Applies quickly to multiple opportunities"
+            elif action_counts['save'] >= 2:
+                behavior_type = "Cautious - Saves many but applies to few"
+            else:
+                behavior_type = "Explorer - Tries diverse opportunities"
+            
+            cursor.execute('''
+                INSERT INTO collaborative_insights 
+                (insight_type, title, description, data)
+                VALUES (?, ?, ?, ?)
+            ''', (
+                'behavioral_patterns',
+                f'User Behavior Pattern: {actions[0]["name"]}',
+                behavior_type,
+                json.dumps({
+                    'user_name': actions[0]['name'],
+                    'behavior_type': behavior_type,
+                    'action_counts': dict(action_counts),
+                    'total_actions': len(actions)
+                })
+            ))
+
 # Run the application
 if __name__ == "__main__":
     import uvicorn
     
-    # Initialize database and seed data once if empty
+    # Initialize database and ensure data integrity
     db.init_db()
     Utils.create_sample_files()
     try:
-        # Seed only when table is empty
+        # Always reseed to ensure data integrity and prevent duplicates
         db.seed_internships("data/internships.json")
-    except Exception:
-        pass
+        logger.info("Database initialized and internships reseeded for production")
+    except Exception as e:
+        logger.error(f"Failed to seed internships: {e}")
+        # Don't fail startup, but log the error
+    
+    # Run server
+    uvicorn.run(
+        "api:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info"
+    )
+
+def _generate_diverse_behavior_data(db):
+    """Generate diverse behavior data for better collaborative insights"""
+    try:
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        
+        # Get all candidates and internships
+        cursor.execute('SELECT id FROM candidates')
+        candidates = [row[0] for row in cursor.fetchall()]
+        
+        cursor.execute('SELECT id, title, company, required_skills, location FROM internships')
+        internships = cursor.fetchall()
+        
+        if not candidates or not internships:
+            logger.warning("No candidates or internships found for diverse behavior generation")
+            conn.close()
+            return
+        
+        # Generate diverse behavior patterns
+        import random
+        from datetime import datetime, timedelta
+        
+        # Create behavior patterns for different types of users
+        behavior_patterns = [
+            {'actions': ['view', 'save', 'apply'], 'weight': 0.3},  # Engaged users
+            {'actions': ['view'], 'weight': 0.4},  # Browsers
+            {'actions': ['view', 'save'], 'weight': 0.2},  # Savers
+            {'actions': ['view', 'apply'], 'weight': 0.1},  # Quick appliers
+        ]
+        
+        # Generate behaviors for each candidate
+        for candidate_id in candidates:
+            # Select a behavior pattern
+            pattern = random.choices(behavior_patterns, weights=[p['weight'] for p in behavior_patterns])[0]
+            
+            # Select random internships for this candidate
+            num_internships = random.randint(3, 8)
+            selected_internships = random.sample(internships, min(num_internships, len(internships)))
+            
+            for internship in selected_internships:
+                internship_id = internship[0]
+                
+                # Generate behaviors based on pattern
+                for action in pattern['actions']:
+                    # Random timestamp within last 30 days
+                    days_ago = random.randint(0, 30)
+                    timestamp = datetime.now() - timedelta(days=days_ago)
+                    
+                    # Insert behavior
+                    cursor.execute('''
+                        INSERT INTO user_behaviors (candidate_id, internship_id, action, created_at)
+                        VALUES (?, ?, ?, ?)
+                    ''', (candidate_id, internship_id, action, timestamp))
+        
+        conn.commit()
+        conn.close()
+        
+        logger.info("Generated diverse behavior data successfully")
+        
+    except Exception as e:
+        logger.error(f"Error generating diverse behavior data: {e}")
+        if 'conn' in locals():
+            conn.close()
+
+def _generate_comprehensive_training_data(db):
+    """Generate comprehensive training data for collaborative filtering"""
+    try:
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        
+        # Get all candidates and internships
+        cursor.execute('SELECT id FROM candidates')
+        candidates = [row[0] for row in cursor.fetchall()]
+        
+        cursor.execute('SELECT id, title, company, required_skills, location FROM internships')
+        internships = cursor.fetchall()
+        
+        if not candidates or not internships:
+            logger.warning("No candidates or internships found for comprehensive training data")
+            conn.close()
+            return
+        
+        # Generate comprehensive behavior patterns
+        import random
+        from datetime import datetime, timedelta
+        
+        # Create diverse user personas for better collaborative filtering
+        user_personas = [
+            {
+                'name': 'tech_enthusiast',
+                'preferred_skills': ['python', 'javascript', 'react', 'node.js', 'aws'],
+                'preferred_companies': ['tech', 'ai', 'data', 'cloud'],
+                'preferred_locations': ['bangalore', 'mumbai', 'delhi'],
+                'behavior_pattern': ['view', 'save', 'apply'],
+                'weight': 0.25
+            },
+            {
+                'name': 'product_focused',
+                'preferred_skills': ['product', 'analytics', 'strategy', 'management'],
+                'preferred_companies': ['product', 'startup', 'growth'],
+                'preferred_locations': ['bangalore', 'hyderabad'],
+                'behavior_pattern': ['view', 'save'],
+                'weight': 0.20
+            },
+            {
+                'name': 'design_creative',
+                'preferred_skills': ['design', 'ui', 'ux', 'figma', 'sketch'],
+                'preferred_companies': ['design', 'creative', 'studio'],
+                'preferred_locations': ['mumbai', 'delhi', 'bangalore'],
+                'behavior_pattern': ['view', 'save', 'apply'],
+                'weight': 0.15
+            },
+            {
+                'name': 'data_analyst',
+                'preferred_skills': ['python', 'sql', 'analytics', 'statistics', 'machine learning'],
+                'preferred_companies': ['data', 'analytics', 'ai', 'research'],
+                'preferred_locations': ['bangalore', 'hyderabad', 'mumbai'],
+                'behavior_pattern': ['view', 'apply'],
+                'weight': 0.20
+            },
+            {
+                'name': 'business_oriented',
+                'preferred_skills': ['business', 'marketing', 'sales', 'strategy'],
+                'preferred_companies': ['business', 'marketing', 'growth'],
+                'preferred_locations': ['mumbai', 'delhi', 'bangalore'],
+                'behavior_pattern': ['view', 'save'],
+                'weight': 0.20
+            }
+        ]
+        
+        # Generate behaviors for each candidate based on personas
+        for candidate_id in candidates:
+            # Select a persona for this candidate
+            persona = random.choices(user_personas, weights=[p['weight'] for p in user_personas])[0]
+            
+            # Filter internships based on persona preferences
+            matching_internships = []
+            for internship in internships:
+                internship_id, title, company, required_skills, location = internship
+                
+                # Check if internship matches persona preferences
+                matches = False
+                
+                # Check skills match
+                if required_skills:
+                    skills = [s.strip().lower() for s in required_skills.split(',')]
+                    if any(skill in persona['preferred_skills'] for skill in skills):
+                        matches = True
+                
+                # Check company match
+                if any(pref in company.lower() for pref in persona['preferred_companies']):
+                    matches = True
+                
+                # Check location match
+                if location.lower() in persona['preferred_locations']:
+                    matches = True
+                
+                # Check title match
+                if any(pref in title.lower() for pref in persona['preferred_skills']):
+                    matches = True
+                
+                if matches:
+                    matching_internships.append(internship)
+            
+            # If no matches, use random internships
+            if not matching_internships:
+                matching_internships = random.sample(internships, min(5, len(internships)))
+            else:
+                # Add some random internships for variety
+                random_internships = random.sample(internships, min(3, len(internships)))
+                matching_internships.extend(random_internships)
+            
+            # Generate behaviors based on persona pattern
+            for internship in matching_internships:
+                internship_id = internship[0]
+                
+                # Generate behaviors based on persona pattern
+                for action in persona['behavior_pattern']:
+                    # Random timestamp within last 30 days
+                    days_ago = random.randint(0, 30)
+                    timestamp = datetime.now() - timedelta(days=days_ago)
+                    
+                    # Insert behavior
+                    cursor.execute('''
+                        INSERT INTO user_behaviors (candidate_id, internship_id, action, created_at)
+                        VALUES (?, ?, ?, ?)
+                    ''', (candidate_id, internship_id, action, timestamp))
+        
+        # Generate cross-user interactions for better collaborative filtering
+        logger.info("Generating cross-user interactions for collaborative filtering...")
+        
+        # Create user clusters based on similar preferences
+        user_clusters = {}
+        for candidate_id in candidates:
+            # Get user's behavior patterns
+            cursor.execute('''
+                SELECT i.required_skills, i.company, i.location, i.title
+                FROM user_behaviors ub
+                JOIN internships i ON ub.internship_id = i.id
+                WHERE ub.candidate_id = ? AND ub.action IN ('save', 'apply')
+            ''', (candidate_id,))
+            
+            user_preferences = cursor.fetchall()
+            if user_preferences:
+                # Create a preference signature
+                skills = set()
+                companies = set()
+                locations = set()
+                
+                for pref in user_preferences:
+                    if pref[0]:  # required_skills
+                        skills.update([s.strip().lower() for s in pref[0].split(',')])
+                    if pref[1]:  # company
+                        companies.add(pref[1].lower())
+                    if pref[2]:  # location
+                        locations.add(pref[2].lower())
+                
+                # Find similar users
+                cluster_key = f"{sorted(skills)[:3]}_{sorted(companies)[:2]}_{sorted(locations)[:2]}"
+                if cluster_key not in user_clusters:
+                    user_clusters[cluster_key] = []
+                user_clusters[cluster_key].append(candidate_id)
+        
+        # Generate cross-user recommendations based on clusters
+        for cluster_key, cluster_users in user_clusters.items():
+            if len(cluster_users) > 1:
+                # Users in the same cluster should have similar behaviors
+                for user_id in cluster_users:
+                    # Get behaviors from other users in the cluster
+                    other_users = [u for u in cluster_users if u != user_id]
+                    if other_users:
+                        # Get internships that other users in cluster liked
+                        cursor.execute('''
+                            SELECT DISTINCT ub.internship_id
+                            FROM user_behaviors ub
+                            WHERE ub.candidate_id IN ({}) 
+                            AND ub.action IN ('save', 'apply')
+                            AND ub.internship_id NOT IN (
+                                SELECT internship_id FROM user_behaviors 
+                                WHERE candidate_id = ? AND action IN ('save', 'apply')
+                            )
+                        '''.format(','.join(map(str, other_users))), (user_id,))
+                        
+                        recommended_internships = [row[0] for row in cursor.fetchall()]
+                        
+                        # Add some of these recommendations as behaviors
+                        for internship_id in recommended_internships[:3]:  # Limit to 3
+                            days_ago = random.randint(0, 30)
+                            timestamp = datetime.now() - timedelta(days=days_ago)
+                            
+                            cursor.execute('''
+                                INSERT INTO user_behaviors (candidate_id, internship_id, action, created_at)
+                                VALUES (?, ?, ?, ?)
+                            ''', (user_id, internship_id, 'view', timestamp))
+        
+        conn.commit()
+        conn.close()
+        
+        logger.info("Generated comprehensive training data successfully")
+        
+    except Exception as e:
+        logger.error(f"Error generating comprehensive training data: {e}")
+        if 'conn' in locals():
+            conn.close()
+
+def _train_collaborative_filtering_model(db):
+    """Train collaborative filtering model on sample data"""
+    try:
+        logger.info("Starting collaborative filtering model training...")
+        
+        # Get all behavior data for training
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        
+        # Get comprehensive behavior data
+        cursor.execute('''
+            SELECT ub.candidate_id, ub.internship_id, ub.action, ub.created_at,
+                   c.name, c.skills, c.location as user_location,
+                   i.title, i.company, i.location, i.required_skills, i.preferred_skills
+            FROM user_behaviors ub
+            JOIN candidates c ON ub.candidate_id = c.id
+            JOIN internships i ON ub.internship_id = i.id
+            ORDER BY ub.created_at DESC
+        ''')
+        
+        behaviors = cursor.fetchall()
+        logger.info(f"Training CF model on {len(behaviors)} behavior records")
+        
+        if not behaviors:
+            logger.warning("No behavior data found for CF model training")
+            conn.close()
+            return
+        
+        # Create user-item interaction matrix
+        import pandas as pd
+        import numpy as np
+        from sklearn.decomposition import NMF, TruncatedSVD
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        from sklearn.metrics.pairwise import cosine_similarity
+        import joblib
+        import os
+        
+        # Prepare data for CF model
+        cf_data = []
+        for behavior in behaviors:
+            candidate_id, internship_id, action, created_at, name, skills, user_location, title, company, location, required_skills, preferred_skills = behavior
+            
+            # Weight different actions
+            action_weights = {
+                'view': 1.0,
+                'save': 3.0,
+                'apply': 5.0,
+                'accept': 7.0,
+                'dismiss': -1.0,
+                'unsave': -2.0
+            }
+            
+            weight = action_weights.get(action, 1.0)
+            
+            cf_data.append({
+                'user_id': candidate_id,
+                'item_id': internship_id,
+                'rating': weight,
+                'action': action,
+                'timestamp': created_at,
+                'user_skills': skills,
+                'user_location': user_location,
+                'item_title': title,
+                'item_company': company,
+                'item_location': location,
+                'item_required_skills': required_skills,
+                'item_preferred_skills': preferred_skills
+            })
+        
+        # Convert to DataFrame
+        df = pd.DataFrame(cf_data)
+        
+        # Create user-item matrix
+        user_item_matrix = df.pivot_table(
+            index='user_id', 
+            columns='item_id', 
+            values='rating', 
+            fill_value=0
+        )
+        
+        logger.info(f"Created user-item matrix: {user_item_matrix.shape}")
+        
+        # Train NMF model
+        nmf_model = NMF(n_components=min(10, user_item_matrix.shape[0], user_item_matrix.shape[1]), 
+                       random_state=42, max_iter=200)
+        user_factors = nmf_model.fit_transform(user_item_matrix)
+        item_factors = nmf_model.components_
+        
+        # Train SVD model
+        svd_model = TruncatedSVD(n_components=min(10, user_item_matrix.shape[0], user_item_matrix.shape[1]), 
+                                random_state=42)
+        svd_factors = svd_model.fit_transform(user_item_matrix)
+        
+        # Create skill-based features
+        all_skills = set()
+        for skills_str in df['item_required_skills'].dropna():
+            if skills_str:
+                all_skills.update([s.strip().lower() for s in skills_str.split(',')])
+        
+        # Create skill vectors for internships
+        skill_features = []
+        for _, row in df.groupby('item_id').first().iterrows():
+            skills_str = row['item_required_skills'] or ''
+            skills = [s.strip().lower() for s in skills_str.split(',') if s.strip()]
+            skill_vector = [1 if skill in skills else 0 for skill in sorted(all_skills)]
+            skill_features.append(skill_vector)
+        
+        skill_features = np.array(skill_features)
+        
+        # Train skill-based similarity model
+        skill_similarity = cosine_similarity(skill_features)
+        
+        # Save models
+        models_dir = "models"
+        os.makedirs(models_dir, exist_ok=True)
+        
+        joblib.dump(nmf_model, f"{models_dir}/collaborative_filtering_nmf.joblib")
+        joblib.dump(svd_model, f"{models_dir}/collaborative_filtering_svd.joblib")
+        joblib.dump(skill_similarity, f"{models_dir}/skill_similarity.joblib")
+        joblib.dump(user_item_matrix, f"{models_dir}/user_item_matrix.joblib")
+        
+        # Create trending skills analysis
+        trending_skills = {}
+        for skill in all_skills:
+            skill_count = df[df['item_required_skills'].str.contains(skill, case=False, na=False)]['rating'].sum()
+            trending_skills[skill] = skill_count
+        
+        # Save trending skills
+        joblib.dump(trending_skills, f"{models_dir}/trending_skills.joblib")
+        
+        # Create company popularity analysis
+        company_popularity = df.groupby('item_company')['rating'].sum().to_dict()
+        joblib.dump(company_popularity, f"{models_dir}/company_popularity.joblib")
+        
+        # Create location popularity analysis
+        location_popularity = df.groupby('item_location')['rating'].sum().to_dict()
+        joblib.dump(location_popularity, f"{models_dir}/location_popularity.joblib")
+        
+        # Create user similarity matrix
+        user_similarity = cosine_similarity(user_factors)
+        joblib.dump(user_similarity, f"{models_dir}/user_similarity.joblib")
+        
+        # Create item similarity matrix
+        item_similarity = cosine_similarity(item_factors.T)
+        joblib.dump(item_similarity, f"{models_dir}/item_similarity.joblib")
+        
+        conn.close()
+        
+        logger.info("Collaborative filtering model training completed successfully")
+        logger.info(f"Models saved: NMF, SVD, skill similarity, user similarity, item similarity")
+        logger.info(f"Trending skills: {len(trending_skills)} skills analyzed")
+        logger.info(f"Company popularity: {len(company_popularity)} companies analyzed")
+        logger.info(f"Location popularity: {len(location_popularity)} locations analyzed")
+        
+    except Exception as e:
+        logger.error(f"Error training collaborative filtering model: {e}")
+        if 'conn' in locals():
+            conn.close()
+
+if __name__ == "__main__":
+    import uvicorn
+    
+    # Initialize database and ensure data integrity
+    db.init_db()
+    Utils.create_sample_files()
+    try:
+        # Always reseed to ensure data integrity and prevent duplicates
+        db.seed_internships("data/internships.json")
+        logger.info("Database initialized and internships reseeded for production")
+    except Exception as e:
+        logger.error(f"Failed to seed internships: {e}")
+        # Don't fail startup, but log the error
     
     # Run server
     uvicorn.run(

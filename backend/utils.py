@@ -268,23 +268,31 @@ class Utils:
     
     @staticmethod
     def create_sample_files():
-        """Create sample JSON files for testing"""
+        """Create sample JSON files for testing (only if they don't exist)"""
         import os
         
         # Create data directory if it doesn't exist
         os.makedirs('data', exist_ok=True)
         
-        sample_data = Utils.load_sample_data()
+        # Only create internships.json if it doesn't exist
+        if not os.path.exists('data/internships.json'):
+            sample_data = Utils.load_sample_data()
+            with open('data/internships.json', 'w') as f:
+                json.dump(sample_data['internships'], f, indent=2)
+            logger.info("Created internships.json from sample data")
+        else:
+            logger.info("internships.json already exists, skipping creation")
         
-        # Save internships.json
-        with open('data/internships.json', 'w') as f:
-            json.dump(sample_data['internships'], f, indent=2)
+        # Only create candidates.json if it doesn't exist
+        if not os.path.exists('data/candidates.json'):
+            sample_data = Utils.load_sample_data()
+            with open('data/candidates.json', 'w') as f:
+                json.dump(sample_data['candidates'], f, indent=2)
+            logger.info("Created candidates.json from sample data")
+        else:
+            logger.info("candidates.json already exists, skipping creation")
         
-        # Save candidates.json
-        with open('data/candidates.json', 'w') as f:
-            json.dump(sample_data['candidates'], f, indent=2)
-        
-        logger.info("Sample data files created successfully")
+        logger.info("Sample data files check completed")
     
     @staticmethod
     def format_recommendation_card(recommendation: Dict) -> Dict:

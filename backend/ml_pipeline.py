@@ -552,12 +552,32 @@ class MLPipeline:
             content_score, _, _ = orig_engine.calculate_hybrid_score(candidate, internship)
             scores['content'] = content_score
             
-            # Weighted combination
+            # IMPROVED: More dynamic weighting based on data availability
+            weights = {
+                'collaborative': 0.3,
+                'preference': 0.25,
+                'success': 0.2,
+                'content': 0.25
+            }
+            
+            # Adjust weights based on data quality
+            if scores['collaborative'] == 0:  # No collaborative data
+                weights['collaborative'] = 0.1
+                weights['content'] = 0.4
+            if scores['preference'] == 0:  # No preference data
+                weights['preference'] = 0.1
+                weights['content'] = 0.4
+            
+            # Normalize weights
+            total_weight = sum(weights.values())
+            for key in weights:
+                weights[key] /= total_weight
+            
             final_score = (
-                scores['collaborative'] * 0.3 +
-                scores['preference'] * 0.25 +
-                scores['success'] * 0.2 +
-                scores['content'] * 0.25
+                scores['collaborative'] * weights['collaborative'] +
+                scores['preference'] * weights['preference'] +
+                scores['success'] * weights['success'] +
+                scores['content'] * weights['content']
             )
             
             # Generate explanation
@@ -574,9 +594,37 @@ class MLPipeline:
                 'score_breakdown': scores
             })
         
+        # Apply score normalization to prevent clustering
+        recommendations = self._normalize_ml_scores(recommendations)
+        
         # Sort by score and return top N
         recommendations.sort(key=lambda x: x['score'], reverse=True)
         return recommendations[:top_n]
+    
+    def _normalize_ml_scores(self, recommendations: List[Dict]) -> List[Dict]:
+        """Normalize ML scores to prevent clustering and improve differentiation"""
+        if not recommendations:
+            return recommendations
+        
+        scores = [rec['score'] for rec in recommendations]
+        if not scores:
+            return recommendations
+        
+        # Calculate statistics
+        min_score = min(scores)
+        max_score = max(scores)
+        score_range = max_score - min_score
+        
+        # If all scores are too similar, apply normalization
+        if score_range < 0.15:  # Less than 15% difference for ML scores
+            # Apply more aggressive scaling for ML scores
+            for rec in recommendations:
+                original_score = rec['score']
+                # Apply exponential scaling to create more differentiation
+                normalized_score = (original_score - min_score) / max(score_range, 0.01)
+                rec['score'] = min(1.0, normalized_score * 0.7 + 0.3)  # Scale to 0.3-1.0 range
+        
+        return recommendations
     
     def _save_models(self):
         """Save trained models to disk"""

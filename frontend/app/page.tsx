@@ -7,6 +7,7 @@ import LoginForm from '@/components/LoginForm'
 import SignupForm from '@/components/SignupForm'
 import { useAuth, clearAllData } from '@/lib/auth'
 import { LoadingSpinner } from '@/components/ui'
+import AnimatedTyping from '@/components/AnimatedTyping'
 
 export default function HomePage() {
   const router = useRouter()
@@ -45,14 +46,25 @@ export default function HomePage() {
           className="text-center mb-8"
         >
           <h1 className="text-4xl font-bold text-gray-900 mb-2">
-            🎯 InternGenie
+            InternGenie
           </h1>
           <h2 className="text-2xl font-semibold text-gray-700 mb-4">
             Recommendation Engine
           </h2>
-          <p className="text-gray-600">
-            Find your perfect Product Management internship with AI-powered recommendations!
-          </p>
+          <div className="text-gray-600 text-lg leading-relaxed min-h-[3rem] flex items-center justify-center">
+            <p className="text-center">
+              <span className="font-medium text-gray-700">Finding the best Internship match for you, eliminating</span>{' '}
+              <span className="font-semibold text-blue-600">distraction</span>{' '}
+              <span className="font-medium text-gray-700">and navigating through</span>{' '}
+              <AnimatedTyping 
+                words={['chaos', 'hyperactivity', 'impulsivity']}
+                typingSpeed={150}
+                deletingSpeed={100}
+                pauseTime={2000}
+                className="font-bold text-red-600 italic"
+              />
+            </p>
+          </div>
         </motion.div>
 
         {/* Tab Navigation */}

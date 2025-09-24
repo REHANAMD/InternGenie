@@ -18,7 +18,7 @@ import {
   ChevronUp,
   CheckCircle,
   AlertCircle,
-  MessageCircle
+  MessageCircle,
 } from 'lucide-react'
 
 interface RecommendationCardProps {
@@ -111,6 +111,7 @@ export default function RecommendationCard({
   useEffect(() => {
     hasCheckedRef.current = false
   }, [recommendation.internship_id])
+
 
   const handleSaveToggle = async () => {
     setIsLoading(true)
@@ -298,6 +299,7 @@ export default function RecommendationCard({
             </p>
           </div>
         )}
+
 
         {/* Expandable Description */}
         <div className="mb-6">

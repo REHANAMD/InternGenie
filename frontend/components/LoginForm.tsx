@@ -6,6 +6,7 @@ import { toast } from 'react-hot-toast'
 import { Button, Input, LoadingSpinner } from '@/components/ui'
 import { authAPI } from '@/lib/api'
 import { setAuth } from '@/lib/auth'
+import PasswordInput from './PasswordInput'
 
 interface LoginFormProps {
   onSwitchToSignup: () => void
@@ -83,10 +84,9 @@ export default function LoginForm({ onSwitchToSignup }: LoginFormProps) {
           <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1">
             Password
           </label>
-          <Input
+          <PasswordInput
             id="password"
             name="password"
-            type="password"
             placeholder="Enter your password"
             value={formData.password}
             onChange={handleInputChange}

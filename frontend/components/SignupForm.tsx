@@ -8,6 +8,7 @@ import { Button, Input, Select, Textarea, LoadingSpinner } from '@/components/ui
 import { authAPI, resumeAPI } from '@/lib/api'
 import { setAuth } from '@/lib/auth'
 import { Upload, FileText, X } from 'lucide-react'
+import PasswordInput from './PasswordInput'
 
 interface SignupFormProps {
   onSwitchToLogin: () => void
@@ -275,10 +276,9 @@ export default function SignupForm({ onSwitchToLogin }: SignupFormProps) {
           <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1">
             Password *
           </label>
-          <Input
+          <PasswordInput
             id="password"
             name="password"
-            type="password"
             placeholder="Minimum 6 characters"
             value={formData.password}
             onChange={handleInputChange}

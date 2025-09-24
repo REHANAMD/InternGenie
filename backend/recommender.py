@@ -391,15 +391,29 @@ class RecommendationEngine:
         # Calculate total score
         total_score = sum(score for _, score in score_components)
         
-        # IMPROVEMENT: More lenient disqualification - only penalize if both fail
+        # STRICTER: More realistic penalties for mismatched requirements
         if not edu_eligible and not exp_eligible:
-            total_score *= 0.3  # Only penalize if both education and experience fail
-        elif not edu_eligible or not exp_eligible:
-            total_score *= 0.7  # Less harsh penalty for single failure
+            total_score *= 0.1  # Severe penalty if both fail
+        elif not edu_eligible:
+            total_score *= 0.4  # Significant penalty for education mismatch
+        elif not exp_eligible:
+            total_score *= 0.6  # Moderate penalty for experience mismatch
         
-        # IMPROVEMENT: Minimum score floor for all candidates
-        if total_score < 0.1:  # If score is very low
-            total_score = 0.1  # Set minimum 10% score
+        # REMOVED: No artificial minimum score floor - let poor matches score low
+        
+        # SCORE DIFFERENTIATION: Add bonuses for exceptional matches
+        if total_score > 0.8:
+            # Bonus for excellent matches
+            total_score = min(1.0, total_score + 0.1)
+        elif total_score > 0.6:
+            # Small bonus for good matches
+            total_score = min(1.0, total_score + 0.05)
+        
+        # SKILL MATCH BONUS: Extra points for high skill overlap
+        if len(matched_skills) >= 3:
+            total_score = min(1.0, total_score + 0.1)
+        elif len(matched_skills) >= 2:
+            total_score = min(1.0, total_score + 0.05)
         
         # Generate explanation
         explanation_parts = []
@@ -455,16 +469,53 @@ class RecommendationEngine:
         
         return skill_gaps[:5]  # Return top 5 skill gaps
     
+    def _normalize_scores(self, recommendations: List[Dict]) -> List[Dict]:
+        """Normalize scores to prevent clustering and improve differentiation"""
+        if not recommendations:
+            return recommendations
+        
+        scores = [rec['score'] for rec in recommendations]
+        if not scores:
+            return recommendations
+        
+        # Calculate statistics
+        min_score = min(scores)
+        max_score = max(scores)
+        score_range = max_score - min_score
+        
+        # If all scores are too similar, apply normalization
+        if score_range < 0.1:  # Less than 10% difference
+            # Apply sigmoid-like transformation to spread scores
+            for rec in recommendations:
+                original_score = rec['score']
+                # Apply exponential scaling to create more differentiation
+                normalized_score = (original_score - min_score) / max(score_range, 0.01)
+                rec['score'] = min(1.0, normalized_score * 0.8 + 0.2)  # Scale to 0.2-1.0 range
+        
+        return recommendations
+
     def get_recommendations(self, candidate_id: int, 
                           top_n: int = 5,
                           use_cache: bool = True) -> List[Dict]:
         """Get top N internship recommendations for a candidate"""
-        # Check cache first
+        # Check cache first, but always filter out applied internships
         if use_cache:
             cached = self.db.get_cached_recommendations(candidate_id, hours=24)
             if len(cached) >= top_n:
-                logger.info(f"Using cached recommendations for candidate {candidate_id}")
-                return cached[:top_n]
+                # Filter out applied internships from cached recommendations
+                filtered_cached = []
+                for rec in cached:
+                    if not self.db.is_internship_applied(candidate_id, rec['internship_id']):
+                        if not self.db.is_internship_accepted(candidate_id, rec['internship_id']):
+                            filtered_cached.append(rec)
+                
+                if len(filtered_cached) >= top_n:
+                    logger.info(f"Using filtered cached recommendations for candidate {candidate_id}")
+                    return filtered_cached[:top_n]
+                else:
+                    logger.info(f"Cached recommendations filtered out, generating fresh ones for candidate {candidate_id}")
+            else:
+                logger.info(f"Not enough cached recommendations for candidate {candidate_id}, generating fresh ones")
         
         # Get candidate data
         candidate = self.db.get_candidate(candidate_id=candidate_id)
@@ -480,23 +531,65 @@ class RecommendationEngine:
         applied_count = 0
         accepted_count = 0
         
-        for internship in internships:
-            # First check if internship is accepted - if so, permanently exclude it
-            if self.db.is_internship_accepted(candidate_id, internship['id']):
-                accepted_count += 1
-                logger.info(f"Permanently excluding accepted internship {internship['id']} ({internship['title']}) for candidate {candidate_id}")
-                continue
+        # Get all applications for this candidate to avoid multiple DB calls
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Get all applications for this candidate (excluding withdrawn)
+            cursor.execute('''
+                SELECT internship_id, status FROM applications 
+                WHERE candidate_id = ? AND status != 'withdrawn'
+            ''', (candidate_id,))
+            applications = {row[0]: row[1] for row in cursor.fetchall()}
             
-            # Check if candidate has applied for this internship (excluding withdrawn)
-            if self.db.is_internship_applied(candidate_id, internship['id']):
-                applied_count += 1
-                logger.info(f"Skipping applied internship {internship['id']} ({internship['title']}) for candidate {candidate_id}")
-                continue
+            logger.info(f"Found {len(applications)} applications for candidate {candidate_id}: {applications}")
+            
+        except Exception as e:
+            logger.error(f"Error fetching applications: {e}")
+            applications = {}
+        finally:
+            conn.close()
+        
+        for internship in internships:
+            internship_id = internship['id']
+            
+            # Check if candidate has applied for this internship
+            if internship_id in applications:
+                status = applications[internship_id]
+                if status == 'accepted':
+                    accepted_count += 1
+                    logger.info(f"Permanently excluding accepted internship {internship_id} ({internship['title']}) for candidate {candidate_id}")
+                    continue
+                else:
+                    applied_count += 1
+                    logger.info(f"Skipping applied internship {internship_id} ({internship['title']}) with status {status} for candidate {candidate_id}")
+                    continue
             else:
-                # Include internships that haven't been applied to or are withdrawn
+                # Include internships that haven't been applied to
                 filtered_internships.append(internship)
         
+        # CRITICAL: If we have applied internships, we need to ensure we have enough recommendations
+        # by getting more internships or reducing the top_n requirement
+        if len(filtered_internships) < top_n:
+            logger.warning(f"Only {len(filtered_internships)} internships available after filtering applied ones. Applied: {applied_count}, Accepted: {accepted_count}")
+            # Try to get more internships by including inactive ones
+            inactive_internships = self.db.get_all_internships(active_only=False)
+            for internship in inactive_internships:
+                if not any(f['id'] == internship['id'] for f in filtered_internships):
+                    if not self.db.is_internship_accepted(candidate_id, internship['id']):
+                        if not self.db.is_internship_applied(candidate_id, internship['id']):
+                            filtered_internships.append(internship)
+                            if len(filtered_internships) >= top_n * 2:
+                                break
+        
         logger.info(f"Filtered internships: {len(filtered_internships)} available, {applied_count} applied, {accepted_count} accepted for candidate {candidate_id}")
+        
+        # CRITICAL: Log all applied internships to debug
+        if applications:
+            logger.info(f"Applied internships for candidate {candidate_id}: {list(applications.keys())}")
+            for app_id, status in applications.items():
+                logger.info(f"  - Internship {app_id}: {status}")
         
         # If we don't have enough internships, try to get more by including inactive ones
         if len(filtered_internships) < top_n:
@@ -557,6 +650,9 @@ class RecommendationEngine:
                 explanation
             )
         
+        # Apply score normalization to prevent clustering
+        recommendations = self._normalize_scores(recommendations)
+        
         # Sort by score and return top N
         recommendations.sort(key=lambda x: x['score'], reverse=True)
         top_recommendations = recommendations[:top_n]
@@ -568,8 +664,20 @@ class RecommendationEngine:
             additional_recommendations = recommendations[len(top_recommendations):len(top_recommendations) + additional_needed]
             top_recommendations.extend(additional_recommendations)
         
-        logger.info(f"Generated {len(top_recommendations)} recommendations for candidate {candidate_id}")
-        return top_recommendations
+        # FINAL CHECK: Double-check that no applied internships are in recommendations
+        final_recommendations = []
+        for rec in top_recommendations:
+            internship_id = rec.get('internship_id')
+            if not self.db.is_internship_applied(candidate_id, internship_id):
+                if not self.db.is_internship_accepted(candidate_id, internship_id):
+                    final_recommendations.append(rec)
+                else:
+                    logger.warning(f"CRITICAL: Accepted internship {internship_id} still in recommendations! Removing...")
+            else:
+                logger.warning(f"CRITICAL: Applied internship {internship_id} still in recommendations! Removing...")
+        
+        logger.info(f"Final recommendations: {len(final_recommendations)} (removed {len(top_recommendations) - len(final_recommendations)} applied ones)")
+        return final_recommendations
     
     def get_similar_candidates(self, candidate_id: int, top_n: int = 5) -> List[Dict]:
         """Find similar candidates based on skills and profile (for networking)"""

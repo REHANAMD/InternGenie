@@ -31,25 +31,60 @@ class EnhancedRecommendationEngine:
         has_ml_data = self._check_ml_data_availability()
         
         if use_ml and has_ml_data:
-            logger.info(f"Using ML-enhanced recommendations for candidate {candidate_id}")
+            logger.info(f"🤖 ML-ACTIVE: Using behavior-based recommendations for candidate {candidate_id}")
             return self._get_ml_recommendations(candidate_id, top_n)
         else:
-            logger.info(f"Using original recommendations for candidate {candidate_id}")
+            logger.info(f"📋 RULE-BASED: Using skill/location-based recommendations for candidate {candidate_id}")
             return self._get_original_recommendations(candidate_id, top_n, use_cache)
     
     def _check_ml_data_availability(self) -> bool:
         """Check if we have enough data for ML recommendations"""
         # Check for user behavior data
         behaviors = self.db.get_user_behaviors()
-        if len(behaviors) < 10:  # Need at least 10 interactions
-            return False
+        behavior_count = len(behaviors)
         
         # Check for historical applications
         applications = self.db.get_historical_applications()
-        if len(applications) < 5:  # Need at least 5 applications
-            return False
+        application_count = len(applications)
         
-        return True
+        # Check if we have sample candidates (indicates sample data mode)
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM candidates WHERE email LIKE '%@example.com'")
+        sample_candidates_count = cursor.fetchone()[0]
+        conn.close()
+        
+        # More lenient thresholds for faster ML activation
+        has_enough_behaviors = behavior_count >= 5  # Reduced from 10
+        has_enough_applications = application_count >= 3  # Reduced from 5
+        has_sample_data = sample_candidates_count > 0  # Only use ML if sample data exists
+        
+        ml_available = has_enough_behaviors and has_enough_applications and has_sample_data
+        
+        logger.info(f"ML Data Check: {behavior_count} behaviors, {application_count} applications, {sample_candidates_count} sample candidates. ML Available: {ml_available}")
+        
+        return ml_available
+    
+    def get_ml_status(self) -> Dict:
+        """Get current ML system status and data availability"""
+        behaviors = self.db.get_user_behaviors()
+        applications = self.db.get_historical_applications()
+        
+        return {
+            'ml_available': self._check_ml_data_availability(),
+            'behavior_count': len(behaviors),
+            'application_count': len(applications),
+            'thresholds': {
+                'min_behaviors': 5,
+                'min_applications': 3
+            },
+            'status': 'ML_ACTIVE' if self._check_ml_data_availability() else 'RULE_BASED'
+        }
+    
+    def force_ml_recommendations(self, candidate_id: int, top_n: int = 5) -> List[Dict]:
+        """Force ML recommendations even with limited data (for testing)"""
+        logger.info(f"🧪 FORCE-ML: Bypassing data checks for candidate {candidate_id}")
+        return self._get_ml_recommendations(candidate_id, top_n)
     
     def _get_ml_recommendations(self, candidate_id: int, top_n: int) -> List[Dict]:
         """Get ML-enhanced recommendations"""

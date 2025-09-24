@@ -355,6 +355,16 @@ export const utilityAPI = {
     return response.data;
   },
 
+  getCollaborativeInsights: async (): Promise<{ success: boolean; insights: any[]; total_insights: number }> => {
+    const response = await apiClient.get('/collaborative-insights');
+    return response.data;
+  },
+
+  getCollaborativeInsightsForInternship: async (internshipId: number): Promise<{ success: boolean; insight: any }> => {
+    const response = await apiClient.get(`/collaborative-insights/${internshipId}`);
+    return response.data;
+  },
+
   healthCheck: async (): Promise<{ status: string; timestamp: string }> => {
     const response = await apiClient.get('/health');
     return response.data;
