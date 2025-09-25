@@ -6,7 +6,7 @@ To run the application locally on your device follow these steps-
   -python -m venv venv or python3 -m venv venv (for MacOS)
 4. Now activating the virtual environment, at same location-
    -.venv\Scripts\Activate (for windows)
-   - source venv/bin/activate
+   -source venv/bin/activate
 5. Now install the necessary packages-(use pip3 if python3 is installed on the system)
   -pip install fastapi uvicorn pandas numpy scikit-learn bcrypt PyJWT PyPDF2 python-docx python-multipart requests pydantic email-validator
 6. Now in another terminal or new cmd window navigate to the same repo but to the frontend folder and run npm install
