@@ -12,6 +12,9 @@ import sqlite3
 import json
 from datetime import datetime
 import logging
+import atexit
+import signal
+import sys
 
 from database import Database
 from resume_parser import ResumeParser
@@ -19,7 +22,13 @@ from recommender import RecommendationEngine
 from enhanced_recommender import EnhancedRecommendationEngine
 from auth import AuthManager
 from utils import Utils
+from session_logger import initialize_session_logger, get_session_logger
+from request_logging_middleware import RequestLoggingMiddleware
 
+# Initialize session logger first
+session_logger = initialize_session_logger()
+
+# Setup basic logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -39,6 +48,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add request logging middleware
+app.add_middleware(RequestLoggingMiddleware)
+
+# Server lifecycle event handlers
+def signal_handler(signum, frame):
+    """Handle shutdown signals gracefully"""
+    session_logger.log_server_stop()
+    sys.exit(0)
+
+def cleanup_on_exit():
+    """Cleanup function called on exit"""
+    session_logger.log_server_stop()
+
+# Register signal handlers and cleanup
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+atexit.register(cleanup_on_exit)
+
 # Initialize components
 # Initialize database with absolute path to ensure consistency
 import os
@@ -48,6 +75,9 @@ parser = ResumeParser()
 recommender = RecommendationEngine(db)
 enhanced_engine = EnhancedRecommendationEngine(db)
 auth_manager = AuthManager()
+
+# Log component initialization
+session_logger.log_system_event("Components Initialized", "Database, Parser, Recommender, Auth Manager loaded")
 
 # Pydantic models for request/response
 class UserRegistration(BaseModel):
@@ -130,6 +160,7 @@ async def root():
 async def register(user_data: UserRegistration):
     """Register a new user"""
     try:
+        session_logger.log_authentication("Registration Attempt", user_data.email)
         success, message, user_id = auth_manager.register_user(user_data.dict())
         
         if success:
@@ -138,6 +169,7 @@ async def register(user_data: UserRegistration):
                 user_data.email, 
                 user_data.password
             )
+            session_logger.log_authentication("Registration Success", user_data.email, user_id, True)
             return {
                 "success": True,
                 "message": message,
@@ -146,11 +178,13 @@ async def register(user_data: UserRegistration):
                 "user": user_info
             }
         else:
+            session_logger.log_authentication("Registration Failed", user_data.email, None, False, message)
             raise HTTPException(status_code=400, detail=message)
     except HTTPException as exc:
         # Preserve intended HTTP errors (e.g., 400 Already exists)
         raise exc
     except Exception as e:
+        session_logger.log_error("Registration Error", str(e), context={"email": user_data.email})
         logger.error(f"Registration error: {e}")
         raise HTTPException(status_code=500, detail="Registration failed")
 
@@ -158,12 +192,14 @@ async def register(user_data: UserRegistration):
 async def login(credentials: UserLogin):
     """Login user and return JWT token"""
     try:
+        session_logger.log_authentication("Login Attempt", credentials.email)
         success, message, token, user_data = auth_manager.login_user(
             credentials.email,
             credentials.password
         )
         
         if success:
+            session_logger.log_authentication("Login Success", credentials.email, user_data.get('id'), True)
             return {
                 "success": True,
                 "message": message,
@@ -171,9 +207,11 @@ async def login(credentials: UserLogin):
                 "user": user_data
             }
         else:
+            session_logger.log_authentication("Login Failed", credentials.email, None, False, message)
             raise HTTPException(status_code=401, detail=message)
     
     except Exception as e:
+        session_logger.log_error("Login Error", str(e), context={"email": credentials.email})
         logger.error(f"Login error: {e}")
         raise HTTPException(status_code=500, detail="Login failed")
 
@@ -506,6 +544,12 @@ async def get_recommendations(
     try:
         # ALWAYS clear cache to ensure fresh recommendations
         logger.info(f"Getting recommendations for user {current_user['id']} - clearing cache to ensure fresh data")
+        session_logger.log_recommendation_activity(
+            current_user['id'], 
+            "Get Recommendations", 
+            details=f"Limit: {limit}, Cache: {use_cache}"
+        )
+        
         db.clear_duplicate_applications(current_user['id'])
         db.clear_recommendations_for_candidate(current_user['id'])
         
@@ -529,6 +573,11 @@ async def get_recommendations(
             )
         
         logger.info(f"Returning {len(formatted_recommendations)} fresh recommendations for user {current_user['id']}")
+        session_logger.log_recommendation_activity(
+            current_user['id'], 
+            "Recommendations Generated", 
+            recommendation_count=len(formatted_recommendations)
+        )
         
         return {
             "success": True,
@@ -537,6 +586,7 @@ async def get_recommendations(
         }
     
     except Exception as e:
+        session_logger.log_error("Recommendations Error", str(e), context={"user_id": current_user['id']})
         logger.error(f"Get recommendations error: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate recommendations")
 
@@ -1977,16 +2027,26 @@ def _generate_behavioral_patterns_insights(cursor, behaviors):
 if __name__ == "__main__":
     import uvicorn
     
+    # Log server startup
+    session_logger.log_server_start("0.0.0.0", 8000)
+    
     # Initialize database and ensure data integrity
+    session_logger.log_system_event("Database Initialization Started")
     db.init_db()
     Utils.create_sample_files()
+    
     try:
         # Always reseed to ensure data integrity and prevent duplicates
         db.seed_internships("data/internships.json")
+        session_logger.log_system_event("Database Seeded", "Internships data loaded successfully")
         logger.info("Database initialized and internships reseeded for production")
     except Exception as e:
+        session_logger.log_error("Database Seeding Error", str(e))
         logger.error(f"Failed to seed internships: {e}")
         # Don't fail startup, but log the error
+    
+    # Log server ready
+    session_logger.log_system_event("Server Ready", "All components initialized, server starting...")
     
     # Run server
     uvicorn.run(
