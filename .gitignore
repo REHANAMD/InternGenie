@@ -65,7 +65,12 @@ load_env.sh
 # API Keys and Secrets
 *api*key*
 *secret*
-*password*
+# Only ignore actual password files, not component files
+*password*.txt
+*password*.env
+*password*.config
+*password*.json
+*password*.log
 
 # IDE
 .vscode/
