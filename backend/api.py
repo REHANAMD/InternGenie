@@ -14,6 +14,10 @@ from datetime import datetime
 import logging
 import atexit
 import sys
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 from database import Database
 from resume_parser import ResumeParser

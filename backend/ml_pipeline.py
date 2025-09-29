@@ -532,14 +532,29 @@ class MLPipeline:
         # Get all available internships
         internships = self.db.get_all_internships(active_only=True)
         
+        # CRITICAL FIX: Filter out applied internships
+        filtered_internships = []
+        for internship in internships:
+            internship_id = internship['id']
+            # Check if candidate has applied for this internship (excluding withdrawn)
+            if not self.db.is_internship_applied(candidate_id, internship_id):
+                if not self.db.is_internship_accepted(candidate_id, internship_id):
+                    filtered_internships.append(internship)
+                else:
+                    logger.info(f"Excluding accepted internship {internship_id} ({internship['title']}) for candidate {candidate_id}")
+            else:
+                logger.info(f"Excluding applied internship {internship_id} ({internship['title']}) for candidate {candidate_id}")
+        
+        logger.info(f"ML Pipeline: Filtered {len(internships)} internships to {len(filtered_internships)} (removed {len(internships) - len(filtered_internships)} applied ones)")
+        
         recommendations = []
         
-        for internship in internships:
+        for internship in filtered_internships:
             # Calculate different scores
             scores = {}
             
             # Collaborative filtering score
-            collab_recs = self.get_collaborative_recommendations(candidate_id, top_n=len(internships))
+            collab_recs = self.get_collaborative_recommendations(candidate_id, top_n=len(filtered_internships))
             collab_score = next((r['score'] for r in collab_recs if r['internship_id'] == internship['id']), 0)
             scores['collaborative'] = collab_score
             
@@ -604,7 +619,21 @@ class MLPipeline:
         
         # Sort by score and return top N
         recommendations.sort(key=lambda x: x['score'], reverse=True)
-        return recommendations[:top_n]
+        
+        # FINAL SAFETY CHECK: Ensure no applied internships are in recommendations
+        final_recommendations = []
+        for rec in recommendations:
+            internship_id = rec['internship_id']
+            if not self.db.is_internship_applied(candidate_id, internship_id):
+                if not self.db.is_internship_accepted(candidate_id, internship_id):
+                    final_recommendations.append(rec)
+                else:
+                    logger.warning(f"ML Pipeline CRITICAL: Accepted internship {internship_id} still in recommendations! Removing...")
+            else:
+                logger.warning(f"ML Pipeline CRITICAL: Applied internship {internship_id} still in recommendations! Removing...")
+        
+        logger.info(f"ML Pipeline Final: {len(final_recommendations)} recommendations (removed {len(recommendations) - len(final_recommendations)} applied ones)")
+        return final_recommendations[:top_n]
     
     def _normalize_ml_scores(self, recommendations: List[Dict]) -> List[Dict]:
         """Normalize ML scores to prevent clustering and improve differentiation"""

@@ -13,6 +13,10 @@ import sendgrid
 from sendgrid.helpers.mail import Mail
 from database import Database
 from utils import Utils
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

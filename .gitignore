@@ -59,6 +59,9 @@ logs.txt
 .env.test.local
 .env.production.local
 
+# Environment loading script (contains sensitive data)
+load_env.sh
+
 # API Keys and Secrets
 *api*key*
 *secret*
