@@ -2,6 +2,7 @@
 Recommendation Engine Module - Hybrid recommendation system with rule-based and ML approaches
 """
 import re
+import os
 from typing import List, Dict, Tuple, Set
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -15,7 +16,12 @@ logger = logging.getLogger(__name__)
 class RecommendationEngine:
     def __init__(self, db: Database = None):
         """Initialize recommendation engine"""
-        self.db = db or Database()
+        if db is None:
+            # Use backend database path if no database provided
+            db_path = os.path.join(os.path.dirname(__file__), "recommendation_engine.db")
+            self.db = Database(db_path)
+        else:
+            self.db = db
         self.tfidf_vectorizer = TfidfVectorizer(
             max_features=500,
             stop_words='english',

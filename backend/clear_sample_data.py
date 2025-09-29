@@ -11,7 +11,9 @@ def clear_sample_data():
     """Clear all sample data from the database"""
     logger.info("Clearing sample data...")
     
-    db = Database()
+    import os
+    db_path = os.path.join(os.path.dirname(__file__), "recommendation_engine.db")
+    db = Database(db_path)
     conn = db.get_connection()
     cursor = conn.cursor()
     

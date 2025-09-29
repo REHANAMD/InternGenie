@@ -179,6 +179,26 @@ export const authAPI = {
       localStorage.removeItem('auth_token');
       localStorage.removeItem('user_data');
     }
+  },
+
+  forgotPassword: async (email: string): Promise<{ success: boolean; message: string }> => {
+    const response = await apiClient.post('/auth/forgot-password', { email });
+    return response.data;
+  },
+
+  verifyOTP: async (email: string, otp: string): Promise<{ success: boolean; message: string }> => {
+    const response = await apiClient.post('/auth/verify-otp', { email, otp });
+    return response.data;
+  },
+
+  resetPasswordWithOTP: async (email: string, otp: string, newPassword: string, confirmPassword: string): Promise<{ success: boolean; message: string }> => {
+    const response = await apiClient.post('/auth/reset-password-otp', { 
+      email, 
+      otp, 
+      new_password: newPassword, 
+      confirm_password: confirmPassword 
+    });
+    return response.data;
   }
 };
 
@@ -190,6 +210,26 @@ export const userAPI = {
 
   updateProfile: async (profileData: Partial<User> & { current_password: string }): Promise<{ success: boolean; profile: User; message: string }> => {
     const response = await apiClient.put('/candidates/profile', profileData);
+    return response.data;
+  },
+
+  updatePassword: async (oldPassword: string, newPassword: string): Promise<{ success: boolean; message: string }> => {
+    const response = await apiClient.post('/auth/password/update', {
+      old_password: oldPassword,
+      new_password: newPassword
+    });
+    return response.data;
+  },
+
+  updatePrivacyPreferences: async (dataConsent: boolean): Promise<{ success: boolean; message: string }> => {
+    const response = await apiClient.post('/auth/privacy-preferences', {
+      data_consent: dataConsent
+    });
+    return response.data;
+  },
+
+  getPrivacyPreferences: async (): Promise<{ success: boolean; data_consent: boolean }> => {
+    const response = await apiClient.get('/auth/privacy-preferences');
     return response.data;
   },
 
@@ -368,6 +408,98 @@ export const utilityAPI = {
   healthCheck: async (): Promise<{ status: string; timestamp: string }> => {
     const response = await apiClient.get('/health');
     return response.data;
+  }
+};
+
+// Intelligent Chatbot API
+export const api = {
+  chatWithBot: async (question: string, internshipId: number): Promise<{
+    response: string;
+    intent: string;
+    confidence: number;
+    attention_weights?: number[][];
+  }> => {
+    try {
+      const response = await apiClient.post('/chatbot/chat', {
+        question,
+        internship_id: internshipId
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Chatbot API error:', error);
+      throw new Error('Failed to get chatbot response');
+    }
+  },
+
+  trainChatbot: async (): Promise<{ message: string; model_path: string }> => {
+    const response = await apiClient.post('/chatbot/train');
+    return response.data;
+  },
+
+  getChatbotStatus: async (): Promise<{
+    status: string;
+    vocab_size: number;
+    model_loaded: boolean;
+    intent_labels: string[];
+  }> => {
+    const response = await apiClient.get('/chatbot/status');
+    return response.data;
+  },
+
+  // Feedback and session management
+  submitFeedback: async (sessionId: string, internshipId: number, question: string, response: string, feedback: 'thumbs_up' | 'thumbs_down'): Promise<{
+    message: string;
+    retrained: boolean;
+  }> => {
+    const apiResponse = await apiClient.post('/chatbot/feedback', {
+      session_id: sessionId,
+      internship_id: internshipId,
+      question,
+      response,
+      feedback
+    });
+    return apiResponse.data;
+  },
+
+  regenerateResponse: async (question: string, internshipId: number): Promise<{
+    response: string;
+    intent: string;
+    confidence: number;
+    attention_weights?: number[][];
+  }> => {
+    const apiResponse = await apiClient.post('/chatbot/regenerate', {
+      question,
+      internship_id: internshipId
+    });
+    return apiResponse.data;
+  },
+
+  submitSessionRating: async (sessionId: string, internshipId: number, finalRating: number): Promise<{
+    message: string;
+    rating_summary: {
+      total_responses: number;
+      positive_feedback: number;
+      negative_feedback: number;
+      average_rating: number;
+    };
+    retrained: boolean;
+  }> => {
+    const apiResponse = await apiClient.post('/chatbot/session-rating', {
+      session_id: sessionId,
+      internship_id: internshipId,
+      final_rating: finalRating
+    });
+    return apiResponse.data;
+  },
+
+  getSessionRating: async (sessionId: string, internshipId: number): Promise<{
+    total_responses: number;
+    positive_feedback: number;
+    negative_feedback: number;
+    average_rating: number;
+  }> => {
+    const apiResponse = await apiClient.get(`/chatbot/session-rating/${sessionId}/${internshipId}`);
+    return apiResponse.data;
   }
 };
 

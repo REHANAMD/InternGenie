@@ -7,7 +7,7 @@ const nextConfig = {
       return [
         {
           source: '/api/:path*',
-          destination: 'http://localhost:8000/:path*', // Proxy to FastAPI backend
+          destination: 'http://localhost:8000/:path*', // Proxy to Python API (Rust integration coming soon)
         },
       ]
     },

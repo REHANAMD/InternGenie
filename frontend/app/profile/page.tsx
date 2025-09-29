@@ -23,8 +23,12 @@ import {
   Briefcase,
   Phone,
   Linkedin,
-  Github
+  Github,
+  Key,
+  Shield
 } from 'lucide-react'
+import PasswordUpdateModal from '@/components/PasswordUpdateModal'
+import PrivacyAgreementModal from '@/components/PrivacyAgreementModal'
 
 export default function ProfilePage() {
   const router = useRouter()
@@ -33,6 +37,9 @@ export default function ProfilePage() {
   const [isParsingResume, setIsParsingResume] = useState(false)
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [showPasswordModal, setShowPasswordModal] = useState(false)
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false)
+  const [dataConsent, setDataConsent] = useState<boolean | null>(null)
   const [deleteData, setDeleteData] = useState({
     password: '',
     emailVerification: ''
@@ -225,6 +232,60 @@ export default function ProfilePage() {
     setUploadedFile(null)
   }
 
+  const handlePrivacyPreferences = async (consent: boolean) => {
+    try {
+      const result = await userAPI.updatePrivacyPreferences(consent)
+      
+      if (result.success) {
+        setDataConsent(consent)
+        if (consent !== null) {
+          localStorage.setItem('dataConsent', consent.toString())
+        } else {
+          localStorage.removeItem('dataConsent')
+        }
+        
+        // Dispatch custom event to notify other components
+        window.dispatchEvent(new CustomEvent('privacyPreferencesUpdated', { 
+          detail: { dataConsent: consent } 
+        }))
+        
+        toast.success(consent ? 'Data sharing enabled' : 'Data sharing disabled')
+      } else {
+        toast.error('Failed to update privacy preferences')
+      }
+    } catch (error) {
+      console.error('Error updating privacy preferences:', error)
+      toast.error('Failed to update privacy preferences')
+    }
+  }
+
+  // Load consent status on component mount
+  useEffect(() => {
+    const loadPrivacyPreferences = async () => {
+      try {
+        const result = await userAPI.getPrivacyPreferences()
+        
+        if (result.success) {
+          setDataConsent(result.data_consent)
+          if (result.data_consent !== null) {
+            localStorage.setItem('dataConsent', result.data_consent.toString())
+          } else {
+            localStorage.removeItem('dataConsent')
+          }
+        }
+      } catch (error) {
+        console.error('Error loading privacy preferences:', error)
+        // Fallback to localStorage if API fails
+        const consent = localStorage.getItem('dataConsent')
+        if (consent !== null) {
+          setDataConsent(consent === 'true')
+        }
+      }
+    }
+    
+    loadPrivacyPreferences()
+  }, [])
+
   if (!authenticated || !user) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -239,8 +300,8 @@ export default function ProfilePage() {
     <div className="min-h-screen bg-gray-50">
       <Navbar />
       
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pt-32 pb-8">
-        {/* Header */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-32 pb-8">
+        {/* Fixed Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -265,8 +326,10 @@ export default function ProfilePage() {
         </motion.div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Main Form */}
+          {/* Left Column - Scrollable Form */}
           <div className="lg:col-span-2">
+            <div className="max-h-[calc(100vh-12rem)] overflow-y-auto pr-4">
+              {/* Main Form */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -505,15 +568,76 @@ export default function ProfilePage() {
                 </CardContent>
               </Card>
             </motion.div>
+            </div>
           </div>
 
-          {/* Profile Preview */}
+          {/* Right Sidebar - Fixed */}
           <div className="lg:col-span-1">
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, delay: 0.2 }}
+              className="space-y-6"
             >
+              {/* Security Card */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center">
+                    <Key className="h-5 w-5 mr-2" />
+                    Security
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Password Update Section */}
+                  <div>
+                    <p className="text-sm text-gray-600 mb-3">
+                      Keep your account secure by updating your password regularly
+                    </p>
+                    <Button
+                      onClick={() => setShowPasswordModal(true)}
+                      className="w-full bg-amber-600 hover:bg-amber-700"
+                    >
+                      <Key className="h-4 w-4 mr-2" />
+                      Update Password
+                    </Button>
+                  </div>
+                  
+                  {/* Divider */}
+                  <div className="border-t border-gray-200"></div>
+                  
+                  {/* Privacy Preferences Section */}
+                  <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-sm text-gray-600">
+                        Manage your data sharing preferences for personalized insights
+                      </p>
+                      {dataConsent !== null && (
+                        <span className={`text-xs px-2 py-1 rounded-full ${
+                          dataConsent 
+                            ? 'bg-green-100 text-green-800' 
+                            : 'bg-gray-100 text-gray-800'
+                        }`}>
+                          {dataConsent ? 'Data Sharing: ON' : 'Data Sharing: OFF'}
+                        </span>
+                      )}
+                      {dataConsent === null && (
+                        <span className="text-xs px-2 py-1 rounded-full bg-yellow-100 text-yellow-800">
+                          Privacy Settings Required
+                        </span>
+                      )}
+                    </div>
+                    <Button
+                      onClick={() => setShowPrivacyModal(true)}
+                      className="w-full bg-blue-600 hover:bg-blue-700"
+                    >
+                      <Shield className="h-4 w-4 mr-2" />
+                      Change Privacy Preferences
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Profile Preview Card */}
               <Card>
                 <CardHeader>
                   <CardTitle>Profile Preview</CardTitle>
@@ -679,6 +803,20 @@ export default function ProfilePage() {
           </motion.div>
         </div>
       )}
+
+      {/* Password Update Modal */}
+      <PasswordUpdateModal
+        isOpen={showPasswordModal}
+        onClose={() => setShowPasswordModal(false)}
+      />
+      
+      {/* Privacy Agreement Modal */}
+      <PrivacyAgreementModal
+        isOpen={showPrivacyModal}
+        onClose={() => setShowPrivacyModal(false)}
+        onSavePreferences={handlePrivacyPreferences}
+        initialChoice={dataConsent}
+      />
     </div>
   )
 }

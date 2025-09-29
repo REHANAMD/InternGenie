@@ -20,7 +20,9 @@ def main():
     logger.info("Starting sample data generation...")
     
     # Initialize database
-    db = Database()
+    import os
+    db_path = os.path.join(os.path.dirname(__file__), "recommendation_engine.db")
+    db = Database(db_path)
     
     # Generate behavior data
     logger.info("Generating user behavior data...")

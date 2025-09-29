@@ -6,10 +6,12 @@ import { motion } from 'framer-motion'
 import Navbar from '@/components/Navbar'
 import { Card, CardContent, CardHeader, CardTitle, LoadingSpinner } from '@/components/ui'
 import { useAuth } from '@/lib/auth'
-import { insightsAPI, utilityAPI } from '@/lib/api'
+import { insightsAPI, utilityAPI, userAPI } from '@/lib/api'
+import { toast } from 'react-hot-toast'
 import SkillGapAnalysis from '@/components/insights/SkillGapAnalysis'
 import PerformanceMetrics from '@/components/insights/PerformanceMetrics'
 import InfoTooltip from '@/components/insights/InfoTooltip'
+import PrivacyAgreementModal from '@/components/PrivacyAgreementModal'
 import { 
   TrendingUp, 
   Users, 
@@ -26,7 +28,10 @@ import {
   Zap,
   Calendar,
   DollarSign,
-  X
+  X,
+  Shield,
+  EyeOff,
+  Settings
 } from 'lucide-react'
 
 interface UserInsights {
@@ -63,42 +68,209 @@ export default function InsightsPage() {
   const [error, setError] = useState<string | null>(null)
   const [isGeneratingData, setIsGeneratingData] = useState(false)
   const [isResettingData, setIsResettingData] = useState(false)
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false)
+  const [dataConsent, setDataConsent] = useState<boolean | null>(null)
 
   useEffect(() => {
     if (!authenticated) {
       router.push('/')
       return
     }
+    
+    // Load privacy preferences from database
+    const loadPrivacyPreferences = async () => {
+      try {
+        const result = await userAPI.getPrivacyPreferences()
+        if (result.success) {
+          setDataConsent(result.data_consent)
+          if (result.data_consent !== null) {
+            localStorage.setItem('dataConsent', result.data_consent.toString())
+          } else {
+            localStorage.removeItem('dataConsent')
+          }
+        } else {
+          // If API call fails, fallback to localStorage
+          const consent = localStorage.getItem('dataConsent')
+          if (consent !== null) {
+            setDataConsent(consent === 'true')
+          } else {
+            // Default to null if no preference is set - user needs to make a choice
+            setDataConsent(null)
+          }
+        }
+      } catch (error) {
+        console.error('Error loading privacy preferences:', error)
+        // Fallback to localStorage if API fails
+        const consent = localStorage.getItem('dataConsent')
+        if (consent !== null) {
+          setDataConsent(consent === 'true')
+        } else {
+          // Default to null if no preference is set - user needs to make a choice
+          setDataConsent(null)
+        }
+      }
+    }
+    
+    // Add a small delay to ensure user is fully authenticated
+    const timer = setTimeout(() => {
+      loadPrivacyPreferences()
+    }, 100)
+    
+    return () => clearTimeout(timer)
   }, [authenticated, router])
 
+  // Reload privacy preferences every time the component mounts (user navigates to this page)
   useEffect(() => {
-    const fetchInsights = async () => {
-      try {
-        setIsLoading(true)
-        setError(null)
+    if (authenticated) {
+      const loadPrivacyPreferences = async () => {
+        try {
+          const result = await userAPI.getPrivacyPreferences()
+          if (result.success) {
+            setDataConsent(result.data_consent)
+            if (result.data_consent !== null) {
+              localStorage.setItem('dataConsent', result.data_consent.toString())
+            } else {
+              localStorage.removeItem('dataConsent')
+            }
+          }
+        } catch (error) {
+          console.error('Error reloading privacy preferences:', error)
+        }
+      }
+      loadPrivacyPreferences()
+    }
+  }, [authenticated]) // This will run every time the component mounts
 
-        // Fetch all insights in parallel
-        const [userData, marketData, trendingData] = await Promise.all([
-          insightsAPI.getUserInsights(),
-          insightsAPI.getMarketInsights(),
-          insightsAPI.getTrendingSkills(10)
-        ])
-
-        setUserInsights(userData)
-        setMarketInsights(marketData)
-        setTrendingSkills(trendingData.trending_skills || [])
-      } catch (err) {
-        console.error('Error fetching insights:', err)
-        setError(err instanceof Error ? err.message : 'Failed to load insights')
-      } finally {
-        setIsLoading(false)
+  // Also reload privacy preferences when the page becomes visible (user navigates back)
+  useEffect(() => {
+    const handleFocus = () => {
+      if (authenticated) {
+        const loadPrivacyPreferences = async () => {
+        try {
+          const result = await userAPI.getPrivacyPreferences()
+          if (result.success) {
+            setDataConsent(result.data_consent)
+            if (result.data_consent !== null) {
+              localStorage.setItem('dataConsent', result.data_consent.toString())
+            } else {
+              localStorage.removeItem('dataConsent')
+            }
+          }
+          } catch (error) {
+            console.error('Error reloading privacy preferences on focus:', error)
+          }
+        }
+        loadPrivacyPreferences()
       }
     }
 
-    if (authenticated) {
-      fetchInsights()
-    }
+    window.addEventListener('focus', handleFocus)
+    return () => window.removeEventListener('focus', handleFocus)
   }, [authenticated])
+
+  // Poll for privacy preference changes every 3 seconds as a fallback
+  useEffect(() => {
+    if (!authenticated) return
+
+    const pollPrivacyPreferences = async () => {
+      try {
+        const result = await userAPI.getPrivacyPreferences()
+        if (result.success) {
+          const currentConsent = result.data_consent
+          // Only update if the value has changed
+          if (currentConsent !== dataConsent) {
+            setDataConsent(currentConsent)
+            if (currentConsent !== null) {
+              localStorage.setItem('dataConsent', currentConsent.toString())
+            } else {
+              localStorage.removeItem('dataConsent')
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error polling privacy preferences:', error)
+      }
+    }
+
+    // Poll every 3 seconds
+    const interval = setInterval(pollPrivacyPreferences, 3000)
+    return () => clearInterval(interval)
+  }, [authenticated, dataConsent])
+
+  const handlePrivacyPreferences = async (consent: boolean) => {
+    try {
+      const result = await userAPI.updatePrivacyPreferences(consent)
+      if (result.success) {
+        setDataConsent(consent)
+        if (consent !== null) {
+          localStorage.setItem('dataConsent', consent.toString())
+        } else {
+          localStorage.removeItem('dataConsent')
+        }
+        
+        // Dispatch custom event to notify other components
+        window.dispatchEvent(new CustomEvent('privacyPreferencesUpdated', { 
+          detail: { dataConsent: consent } 
+        }))
+        
+        // If user now consents, fetch insights
+        if (consent) {
+          fetchInsights()
+        }
+      } else {
+        console.error('Failed to update privacy preferences:', result)
+        toast.error('Failed to update privacy preferences')
+        // Still update local state even if API fails
+        setDataConsent(consent)
+        if (consent !== null) {
+          localStorage.setItem('dataConsent', consent.toString())
+        } else {
+          localStorage.removeItem('dataConsent')
+        }
+      }
+    } catch (error) {
+      console.error('Error updating privacy preferences:', error)
+      toast.error('Failed to update privacy preferences')
+      // Still update local state even if API fails
+      setDataConsent(consent)
+      if (consent !== null) {
+        localStorage.setItem('dataConsent', consent.toString())
+      } else {
+        localStorage.removeItem('dataConsent')
+      }
+    }
+  }
+
+  const fetchInsights = async () => {
+    try {
+      setIsLoading(true)
+      setError(null)
+
+      // Fetch all insights in parallel
+      const [userData, marketData, trendingData] = await Promise.all([
+        insightsAPI.getUserInsights(),
+        insightsAPI.getMarketInsights(),
+        insightsAPI.getTrendingSkills(10)
+      ])
+
+      setUserInsights(userData)
+      setMarketInsights(marketData)
+      setTrendingSkills(trendingData.trending_skills || [])
+    } catch (err) {
+      console.error('Error fetching insights:', err)
+      setError(err instanceof Error ? err.message : 'Failed to load insights')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (authenticated && dataConsent === true) {
+      fetchInsights()
+    } else if (authenticated && (dataConsent === false || dataConsent === null)) {
+      setIsLoading(false)
+    }
+  }, [authenticated, dataConsent])
 
   const generateSampleData = async () => {
     try {
@@ -182,6 +354,83 @@ export default function InsightsPage() {
             <LoadingSpinner />
           </div>
         </div>
+      </div>
+    )
+  }
+
+
+
+  // Show privacy notice for non-consenting users or users who haven't made a choice
+  if (dataConsent === false || dataConsent === null) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <Navbar />
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pt-40 pb-8">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6 }}
+            className="text-center"
+          >
+            <div className="bg-white rounded-lg shadow-lg p-8">
+              <div className="flex justify-center mb-6">
+                <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center">
+                  <EyeOff className="w-10 h-10 text-gray-400" />
+                </div>
+              </div>
+              
+              <h1 className="text-3xl font-bold text-gray-900 mb-4">
+                {dataConsent === null ? 'Privacy Settings Required' : 'Insights Not Available'}
+              </h1>
+              
+              <p className="text-lg text-gray-600 mb-6 max-w-2xl mx-auto">
+                {dataConsent === null 
+                  ? 'Please configure your privacy preferences to access personalized insights and recommendations.'
+                  : 'We respect your privacy choice and are not collecting any personal data for analytics. As a result, personalized insights are not available at this time.'
+                }
+              </p>
+              
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-8">
+                <div className="flex items-start">
+                  <Shield className="h-6 w-6 text-blue-600 mt-0.5 mr-3" />
+                  <div className="text-left">
+                    <h3 className="font-semibold text-blue-900 mb-2">
+                      Your Privacy is Protected
+                    </h3>
+                    <ul className="text-sm text-blue-800 space-y-1">
+                      <li>• We don't record your interactions or behavior</li>
+                      <li>• No personal data is used for recommendations</li>
+                      <li>• Your browsing patterns are not tracked</li>
+                      <li>• All data collection has been disabled</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="space-y-4">
+                <p className="text-gray-600">
+                  If you'd like to see personalized insights and recommendations, you can change your privacy preferences:
+                </p>
+                
+                <button
+                  onClick={() => setShowPrivacyModal(true)}
+                  className="inline-flex items-center px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors duration-200"
+                >
+                  <Settings className="h-5 w-5 mr-2" />
+                  Change Privacy Settings
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+        
+        {/* Privacy Agreement Modal */}
+        <PrivacyAgreementModal
+          isOpen={showPrivacyModal}
+          onClose={() => setShowPrivacyModal(false)}
+          onSavePreferences={handlePrivacyPreferences}
+          initialChoice={dataConsent}
+        />
       </div>
     )
   }
@@ -566,6 +815,14 @@ export default function InsightsPage() {
           </div>
         </div>
       </div>
+      
+      {/* Privacy Agreement Modal */}
+      <PrivacyAgreementModal
+        isOpen={showPrivacyModal}
+        onClose={() => setShowPrivacyModal(false)}
+        onSavePreferences={handlePrivacyPreferences}
+        initialChoice={dataConsent}
+      />
     </div>
   )
 }

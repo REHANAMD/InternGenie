@@ -13,7 +13,6 @@ import json
 from datetime import datetime
 import logging
 import atexit
-import signal
 import sys
 
 from database import Database
@@ -22,11 +21,12 @@ from recommender import RecommendationEngine
 from enhanced_recommender import EnhancedRecommendationEngine
 from auth import AuthManager
 from utils import Utils
-from session_logger import initialize_session_logger, get_session_logger
+# Session logger disabled - using centralized logging instead
+# from session_logger import initialize_session_logger, get_session_logger
 from request_logging_middleware import RequestLoggingMiddleware
 
-# Initialize session logger first
-session_logger = initialize_session_logger()
+# Session logger disabled - using centralized logging instead
+# session_logger = initialize_session_logger()
 
 # Setup basic logging
 logging.basicConfig(level=logging.INFO)
@@ -51,19 +51,12 @@ app.add_middleware(
 # Add request logging middleware
 app.add_middleware(RequestLoggingMiddleware)
 
-# Server lifecycle event handlers
-def signal_handler(signum, frame):
-    """Handle shutdown signals gracefully"""
-    session_logger.log_server_stop()
-    sys.exit(0)
-
+# Server lifecycle event handlers - using uvicorn's built-in shutdown handling
 def cleanup_on_exit():
     """Cleanup function called on exit"""
-    session_logger.log_server_stop()
+    logger.info("SERVER STOPPED LISTENING")
 
-# Register signal handlers and cleanup
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
+# Register cleanup function
 atexit.register(cleanup_on_exit)
 
 # Initialize components
@@ -74,10 +67,17 @@ db = Database(db_path)
 parser = ResumeParser()
 recommender = RecommendationEngine(db)
 enhanced_engine = EnhancedRecommendationEngine(db)
-auth_manager = AuthManager()
+auth_manager = AuthManager(db=db)  # Pass database instance directly
+
+# Initialize simple chatbot
+from simple_chatbot import SimpleChatbot
+chatbot_service = SimpleChatbot()
+
+# Simple chatbot initialized
+logger.info("Simple chatbot initialized successfully")
 
 # Log component initialization
-session_logger.log_system_event("Components Initialized", "Database, Parser, Recommender, Auth Manager loaded")
+logger.info("Components Initialized - Database, Parser, Recommender, Auth Manager, Chatbot loaded")
 
 # Pydantic models for request/response
 class UserRegistration(BaseModel):
@@ -120,6 +120,22 @@ class PasswordResetConfirm(BaseModel):
     reset_token: str
     new_password: str = Field(..., min_length=6)
 
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class VerifyOTPRequest(BaseModel):
+    email: EmailStr
+    otp: str = Field(..., min_length=6, max_length=6)
+
+class ResetPasswordWithOTP(BaseModel):
+    email: EmailStr
+    otp: str = Field(..., min_length=6, max_length=6)
+    new_password: str = Field(..., min_length=6)
+    confirm_password: str = Field(..., min_length=6)
+
+class PrivacyPreferencesRequest(BaseModel):
+    data_consent: bool
+
 # Dependency to get current user from token
 async def get_current_user(authorization: str = Header(None)):
     """Extract and verify user from JWT token"""
@@ -160,7 +176,7 @@ async def root():
 async def register(user_data: UserRegistration):
     """Register a new user"""
     try:
-        session_logger.log_authentication("Registration Attempt", user_data.email)
+        logger.info(f"Registration attempt for email: {user_data.email}")
         success, message, user_id = auth_manager.register_user(user_data.dict())
         
         if success:
@@ -169,7 +185,7 @@ async def register(user_data: UserRegistration):
                 user_data.email, 
                 user_data.password
             )
-            session_logger.log_authentication("Registration Success", user_data.email, user_id, True)
+            logger.info(f"Registration successful for email: {user_data.email}, user_id: {user_id}")
             return {
                 "success": True,
                 "message": message,
@@ -178,28 +194,27 @@ async def register(user_data: UserRegistration):
                 "user": user_info
             }
         else:
-            session_logger.log_authentication("Registration Failed", user_data.email, None, False, message)
+            logger.warning(f"Registration failed for email: {user_data.email}, reason: {message}")
             raise HTTPException(status_code=400, detail=message)
     except HTTPException as exc:
         # Preserve intended HTTP errors (e.g., 400 Already exists)
         raise exc
     except Exception as e:
-        session_logger.log_error("Registration Error", str(e), context={"email": user_data.email})
-        logger.error(f"Registration error: {e}")
+        logger.error(f"Registration error for email {user_data.email}: {e}")
         raise HTTPException(status_code=500, detail="Registration failed")
 
 @app.post("/auth/login")
 async def login(credentials: UserLogin):
     """Login user and return JWT token"""
     try:
-        session_logger.log_authentication("Login Attempt", credentials.email)
+        logger.info(f"Login attempt for email: {credentials.email}")
         success, message, token, user_data = auth_manager.login_user(
             credentials.email,
             credentials.password
         )
         
         if success:
-            session_logger.log_authentication("Login Success", credentials.email, user_data.get('id'), True)
+            logger.info(f"Login successful for email: {credentials.email}, user_id: {user_data.get('id')}")
             return {
                 "success": True,
                 "message": message,
@@ -207,12 +222,11 @@ async def login(credentials: UserLogin):
                 "user": user_data
             }
         else:
-            session_logger.log_authentication("Login Failed", credentials.email, None, False, message)
+            logger.warning(f"Login failed for email: {credentials.email}, reason: {message}")
             raise HTTPException(status_code=401, detail=message)
     
     except Exception as e:
-        session_logger.log_error("Login Error", str(e), context={"email": credentials.email})
-        logger.error(f"Login error: {e}")
+        logger.error(f"Login error for email {credentials.email}: {e}")
         raise HTTPException(status_code=500, detail="Login failed")
 
 @app.post("/auth/refresh")
@@ -298,6 +312,116 @@ async def confirm_password_reset(reset_confirm: PasswordResetConfirm):
     except Exception as e:
         logger.error(f"Password reset confirm error: {e}")
         raise HTTPException(status_code=500, detail="Password reset failed")
+
+@app.post("/auth/forgot-password")
+async def forgot_password(request: ForgotPasswordRequest):
+    """Request password reset with OTP"""
+    try:
+        success, message = auth_manager.request_password_reset_otp(request.email)
+        
+        if success:
+            return {"success": True, "message": message}
+        else:
+            raise HTTPException(status_code=400, detail=message)
+    
+    except Exception as e:
+        logger.error(f"Forgot password error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to process forgot password request")
+
+@app.post("/auth/verify-otp")
+async def verify_otp(request: VerifyOTPRequest):
+    """Verify OTP for password reset"""
+    try:
+        # Check if user exists
+        user = auth_manager.db.get_candidate(email=request.email)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Verify OTP
+        is_valid = auth_manager.db.verify_otp(request.email, request.otp)
+        
+        if is_valid:
+            return {"success": True, "message": "OTP verified successfully"}
+        else:
+            raise HTTPException(status_code=400, detail="Invalid or expired OTP")
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Verify OTP error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to verify OTP")
+
+@app.post("/auth/reset-password-otp")
+async def reset_password_otp(request: ResetPasswordWithOTP):
+    """Reset password using OTP"""
+    try:
+        # Validate password confirmation
+        if request.new_password != request.confirm_password:
+            raise HTTPException(status_code=400, detail="Passwords do not match")
+        
+        success, message = auth_manager.reset_password_with_otp(
+            request.email,
+            request.otp,
+            request.new_password
+        )
+        
+        if success:
+            return {"success": True, "message": message}
+        else:
+            raise HTTPException(status_code=400, detail=message)
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Reset password OTP error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to reset password")
+
+@app.post("/auth/privacy-preferences")
+async def update_privacy_preferences(request: PrivacyPreferencesRequest, current_user: dict = Depends(get_current_user)):
+    """Update user's privacy preferences"""
+    try:
+        logger.info(f"Updating privacy preferences for user ID: {current_user['id']} to {request.data_consent}")
+        success = auth_manager.db.update_candidate(
+            current_user["id"],
+            {"data_consent": request.data_consent}
+        )
+        
+        if success:
+            logger.info(f"Successfully updated privacy preferences for user {current_user['id']}")
+            return {"success": True, "message": "Privacy preferences updated successfully"}
+        else:
+            logger.error(f"Failed to update privacy preferences for user {current_user['id']}")
+            raise HTTPException(status_code=400, detail="Failed to update privacy preferences")
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in update_privacy_preferences: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.get("/auth/privacy-preferences")
+async def get_privacy_preferences(current_user: dict = Depends(get_current_user)):
+    """Get user's privacy preferences"""
+    try:
+        logger.info(f"Getting privacy preferences for user ID: {current_user['id']}")
+        candidate = auth_manager.db.get_candidate(candidate_id=current_user["id"])
+        if not candidate:
+            logger.error(f"User not found: {current_user['id']}")
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        data_consent = candidate.get("data_consent")
+        logger.info(f"User {current_user['id']} data_consent: {data_consent}")
+        
+        return {
+            "success": True, 
+            "data_consent": bool(data_consent) if data_consent is not None else None
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in get_privacy_preferences: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 # Candidate endpoints
 @app.get("/candidates/profile")
@@ -544,11 +668,7 @@ async def get_recommendations(
     try:
         # ALWAYS clear cache to ensure fresh recommendations
         logger.info(f"Getting recommendations for user {current_user['id']} - clearing cache to ensure fresh data")
-        session_logger.log_recommendation_activity(
-            current_user['id'], 
-            "Get Recommendations", 
-            details=f"Limit: {limit}, Cache: {use_cache}"
-        )
+        logger.info(f"Getting recommendations for user {current_user['id']} - Limit: {limit}, Cache: {use_cache}")
         
         db.clear_duplicate_applications(current_user['id'])
         db.clear_recommendations_for_candidate(current_user['id'])
@@ -573,11 +693,7 @@ async def get_recommendations(
             )
         
         logger.info(f"Returning {len(formatted_recommendations)} fresh recommendations for user {current_user['id']}")
-        session_logger.log_recommendation_activity(
-            current_user['id'], 
-            "Recommendations Generated", 
-            recommendation_count=len(formatted_recommendations)
-        )
+        logger.info(f"Generated {len(formatted_recommendations)} recommendations for user {current_user['id']}")
         
         return {
             "success": True,
@@ -586,7 +702,7 @@ async def get_recommendations(
         }
     
     except Exception as e:
-        session_logger.log_error("Recommendations Error", str(e), context={"user_id": current_user['id']})
+        logger.error(f"Recommendations error for user {current_user['id']}: {e}")
         logger.error(f"Get recommendations error: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate recommendations")
 
@@ -2028,25 +2144,33 @@ if __name__ == "__main__":
     import uvicorn
     
     # Log server startup
-    session_logger.log_server_start("0.0.0.0", 8000)
+    logger.info("SERVER STARTED - Host: 0.0.0.0, Port: 8000")
     
     # Initialize database and ensure data integrity
-    session_logger.log_system_event("Database Initialization Started")
+    logger.info("Database Initialization Started")
     db.init_db()
     Utils.create_sample_files()
     
     try:
-        # Always reseed to ensure data integrity and prevent duplicates
-        db.seed_internships("data/internships.json")
-        session_logger.log_system_event("Database Seeded", "Internships data loaded successfully")
-        logger.info("Database initialized and internships reseeded for production")
+        # Only seed if database is empty
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM internships')
+        count = cursor.fetchone()[0]
+        conn.close()
+        
+        if count == 0:
+            db.seed_internships("data/internships.json")
+            logger.info("Database Seeded - Internships data loaded successfully")
+        else:
+            logger.info(f"Database already has {count} internships, skipping seeding")
     except Exception as e:
-        session_logger.log_error("Database Seeding Error", str(e))
+        logger.error(f"Database Seeding Error: {e}")
         logger.error(f"Failed to seed internships: {e}")
         # Don't fail startup, but log the error
     
     # Log server ready
-    session_logger.log_system_event("Server Ready", "All components initialized, server starting...")
+    logger.info("Server Ready - All components initialized, server starting...")
     
     # Run server
     uvicorn.run(
@@ -2481,26 +2605,94 @@ def _train_collaborative_filtering_model(db):
         if 'conn' in locals():
             conn.close()
 
+# Intelligent Chatbot Endpoints
+class ChatbotRequest(BaseModel):
+    question: str
+    internship_id: int
+
+class ChatbotResponse(BaseModel):
+    response: str
+    intent: str
+    confidence: float
+    attention_weights: Optional[List[List[float]]] = None
+
+@app.post("/chatbot/test", response_model=ChatbotResponse)
+async def test_chatbot(
+    request: ChatbotRequest
+):
+    """Test chatbot without authentication - used as fallback"""
+    try:
+        # Use test data
+        user_data = {
+            'skills': 'Python, React, JavaScript',
+            'experience_years': 2,
+            'location': 'Mumbai',
+            'education': 'Computer Science'
+        }
+        
+        # Get internship data
+        internship_data = db.get_internship(request.internship_id)
+        if not internship_data:
+            raise HTTPException(status_code=404, detail="Internship not found")
+        
+        # Generate response using intelligent chatbot
+        response = chatbot_service.generate_response(
+            question=request.question,
+            user_data=user_data,
+            internship_data=internship_data
+        )
+        
+        return ChatbotResponse(
+            response=response['response'],
+            intent=response['intent'],
+            confidence=response['confidence'],
+            attention_weights=response['attention_weights']
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in test chatbot: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate chatbot response")
+
+@app.post("/chatbot/chat", response_model=ChatbotResponse)
+async def chat_with_bot(
+    request: ChatbotRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Chat with the intelligent chatbot about a specific internship"""
+    try:
+        # Get user data
+        user_data = db.get_candidate(current_user['id'])
+        logger.info(f"User data for ID {current_user['id']}: {user_data}")
+        if not user_data:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Get internship data
+        internship_data = db.get_internship(request.internship_id)
+        logger.info(f"Internship data for ID {request.internship_id}: {internship_data}")
+        if not internship_data:
+            raise HTTPException(status_code=404, detail="Internship not found")
+        
+        # Generate response using intelligent chatbot
+        logger.info(f"Generating response for question: {request.question}")
+        response = chatbot_service.generate_response(
+            question=request.question,
+            user_data=user_data,
+            internship_data=internship_data
+        )
+        logger.info(f"Generated response: {response}")
+        
+        return ChatbotResponse(
+            response=response['response'],
+            intent=response['intent'],
+            confidence=response['confidence'],
+            attention_weights=response['attention_weights']
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in chatbot chat: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate chatbot response")
+
 if __name__ == "__main__":
     import uvicorn
-    
-    # Initialize database and ensure data integrity
-    db.init_db()
-    Utils.create_sample_files()
-    try:
-        # Always reseed to ensure data integrity and prevent duplicates
-        db.seed_internships("data/internships.json")
-        logger.info("Database initialized and internships reseeded for production")
-    except Exception as e:
-        logger.error(f"Failed to seed internships: {e}")
-        # Don't fail startup, but log the error
-    
-    # Run server
-    uvicorn.run(
-        "api:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
-    )
-    
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+

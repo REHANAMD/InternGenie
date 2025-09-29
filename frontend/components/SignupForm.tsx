@@ -5,10 +5,11 @@ import { useRouter } from 'next/navigation'
 import { toast } from 'react-hot-toast'
 import { useDropzone } from 'react-dropzone'
 import { Button, Input, Select, Textarea, LoadingSpinner } from '@/components/ui'
-import { authAPI, resumeAPI } from '@/lib/api'
+import { authAPI, resumeAPI, userAPI } from '@/lib/api'
 import { setAuth } from '@/lib/auth'
-import { Upload, FileText, X } from 'lucide-react'
+import { Upload, FileText, X, Shield, CheckCircle } from 'lucide-react'
 import PasswordInput from './PasswordInput'
+import PrivacyAgreementModal from './PrivacyAgreementModal'
 
 interface SignupFormProps {
   onSwitchToLogin: () => void
@@ -19,6 +20,9 @@ export default function SignupForm({ onSwitchToLogin }: SignupFormProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [isParsingResume, setIsParsingResume] = useState(false)
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false)
+  const [dataConsent, setDataConsent] = useState<boolean | null>(null)
+  const [termsAccepted, setTermsAccepted] = useState(false)
   
   const [formData, setFormData] = useState({
     name: '',
@@ -118,6 +122,34 @@ export default function SignupForm({ onSwitchToLogin }: SignupFormProps) {
       const result = await authAPI.register(formData)
 
       if (result.success) {
+        // Save privacy preferences to database immediately after registration
+        if (dataConsent !== null) {
+          try {
+            // First, we need to login the user to get a token for the API call
+            const loginResult = await authAPI.login({
+              email: formData.email,
+              password: formData.password
+            })
+            
+            if (loginResult.success && loginResult.token) {
+              // Save the auth data temporarily
+              localStorage.setItem('auth_token', loginResult.token)
+              localStorage.setItem('user_data', JSON.stringify(loginResult.user))
+              
+              // Now save privacy preferences to database
+              await userAPI.updatePrivacyPreferences(dataConsent)
+              
+              // Clear the temporary auth data since we want user to login properly
+              localStorage.removeItem('auth_token')
+              localStorage.removeItem('user_data')
+            }
+          } catch (error) {
+            console.error('Error saving privacy preferences during signup:', error)
+            // Fallback to localStorage if database save fails
+            localStorage.setItem('dataConsent', dataConsent.toString())
+          }
+        }
+        
         // Clear the form
         setFormData({
           name: '',
@@ -132,6 +164,11 @@ export default function SignupForm({ onSwitchToLogin }: SignupFormProps) {
           github: ''
         })
         setUploadedFile(null)
+        
+        // Also save to localStorage as backup
+        if (dataConsent !== null) {
+          localStorage.setItem('dataConsent', dataConsent.toString())
+        }
         
         toast.success('User registered successfully! Please login to continue.')
         onSwitchToLogin()
@@ -166,6 +203,18 @@ export default function SignupForm({ onSwitchToLogin }: SignupFormProps) {
 
   const removeFile = () => {
     setUploadedFile(null)
+  }
+
+  const handlePrivacyPreferences = async (consent: boolean) => {
+    setDataConsent(consent)
+    // Store consent in localStorage for later use
+    localStorage.setItem('dataConsent', consent.toString())
+    
+    // Note: We'll save to database after successful registration
+  }
+
+  const isSignupEnabled = () => {
+    return termsAccepted && dataConsent !== null
   }
 
   return (
@@ -392,16 +441,62 @@ export default function SignupForm({ onSwitchToLogin }: SignupFormProps) {
           </div>
         </div>
 
+        {/* Privacy Agreement Section */}
+        <div className="border-t pt-6">
+          <div className="space-y-4">
+            {/* Privacy Agreement Link */}
+            <div className="flex items-start space-x-3">
+              <Shield className="h-5 w-5 text-blue-600 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-sm text-gray-600 mb-2">
+                  Before creating your account, please review our data collection and usage practices:
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowPrivacyModal(true)}
+                  className="text-blue-600 hover:text-blue-700 font-medium text-sm underline"
+                >
+                  Read Privacy & Data Usage Agreement
+                </button>
+                {dataConsent !== null && (
+                  <div className="mt-2 flex items-center text-sm">
+                    <CheckCircle className="h-4 w-4 text-green-600 mr-2" />
+                    <span className="text-green-700">
+                      Privacy preferences saved: {dataConsent ? 'Data sharing accepted' : 'Data sharing declined'}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Terms Acceptance Checkbox */}
+            <div className="flex items-start space-x-3">
+              <input
+                type="checkbox"
+                id="termsAccepted"
+                checked={termsAccepted}
+                onChange={(e) => setTermsAccepted(e.target.checked)}
+                className="mt-1 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+              />
+              <label htmlFor="termsAccepted" className="text-sm text-gray-600">
+                I have successfully read and understood the terms of usage and privacy agreement
+              </label>
+            </div>
+          </div>
+        </div>
+
         <Button 
           type="submit" 
-          className="w-full bg-blue-600 hover:bg-blue-700"
-          disabled={isLoading}
+          className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+          disabled={isLoading || !isSignupEnabled()}
         >
           {isLoading ? (
             <div className="flex items-center">
               <LoadingSpinner size="sm" />
               <span className="ml-2">Creating account...</span>
             </div>
+          ) : !isSignupEnabled() ? (
+            'Complete Privacy Agreement to Continue'
           ) : (
             'Sign Up'
           )}
@@ -419,6 +514,14 @@ export default function SignupForm({ onSwitchToLogin }: SignupFormProps) {
           </button>
         </p>
       </div>
+
+      {/* Privacy Agreement Modal */}
+      <PrivacyAgreementModal
+        isOpen={showPrivacyModal}
+        onClose={() => setShowPrivacyModal(false)}
+        onSavePreferences={handlePrivacyPreferences}
+        initialChoice={dataConsent}
+      />
     </div>
   )
 }

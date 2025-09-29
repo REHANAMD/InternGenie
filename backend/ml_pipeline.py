@@ -23,7 +23,12 @@ logger = logging.getLogger(__name__)
 class MLPipeline:
     def __init__(self, db: Database = None):
         """Initialize ML pipeline with models and data processors"""
-        self.db = db or Database()
+        if db is None:
+            # Use backend database path if no database provided
+            db_path = os.path.join(os.path.dirname(__file__), "recommendation_engine.db")
+            self.db = Database(db_path)
+        else:
+            self.db = db
         self.models = {}
         self.scalers = {}
         self.encoders = {}
@@ -685,8 +690,10 @@ class MLPipeline:
 # Testing
 if __name__ == "__main__":
     from database import Database
+    import os
     
-    db = Database()
+    db_path = os.path.join(os.path.dirname(__file__), "recommendation_engine.db")
+    db = Database(db_path)
     ml_pipeline = MLPipeline(db)
     
     # Test user behavior collection

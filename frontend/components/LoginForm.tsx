@@ -7,6 +7,7 @@ import { Button, Input, LoadingSpinner } from '@/components/ui'
 import { authAPI } from '@/lib/api'
 import { setAuth } from '@/lib/auth'
 import PasswordInput from './PasswordInput'
+import ForgotPasswordModal from './ForgotPasswordModal'
 
 interface LoginFormProps {
   onSwitchToSignup: () => void
@@ -15,6 +16,7 @@ interface LoginFormProps {
 export default function LoginForm({ onSwitchToSignup }: LoginFormProps) {
   const router = useRouter()
   const [isLoading, setIsLoading] = useState(false)
+  const [showForgotPassword, setShowForgotPassword] = useState(false)
   const [formData, setFormData] = useState({
     email: '',
     password: ''
@@ -94,6 +96,16 @@ export default function LoginForm({ onSwitchToSignup }: LoginFormProps) {
           />
         </div>
 
+        <div className="text-right">
+          <button
+            type="button"
+            onClick={() => setShowForgotPassword(true)}
+            className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+          >
+            Forgot Password?
+          </button>
+        </div>
+
         <Button 
           type="submit" 
           className="w-full bg-blue-600 hover:bg-blue-700"
@@ -121,6 +133,12 @@ export default function LoginForm({ onSwitchToSignup }: LoginFormProps) {
           </button>
         </p>
       </div>
+
+      {/* Forgot Password Modal */}
+      <ForgotPasswordModal
+        isOpen={showForgotPassword}
+        onClose={() => setShowForgotPassword(false)}
+      />
     </div>
   )
 }

@@ -46,7 +46,7 @@ export default function Navbar() {
           {/* Logo and Brand - Far Left */}
           <div className="flex items-center">
             <Link href="/dashboard" className="flex items-center space-x-2">
-              <span className="font-bold text-xl text-gray-900">InternGenie</span>
+              <span className="font-bold text-xl text-gray-900"><span className="text-blue-600">Intern</span>Genie</span>
             </Link>
           </div>
 

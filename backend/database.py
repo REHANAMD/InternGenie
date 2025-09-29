@@ -48,10 +48,46 @@ class Database:
                 phone TEXT,
                 linkedin TEXT,
                 github TEXT,
+                data_consent BOOLEAN,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        
+        # Create password_reset_otps table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS password_reset_otps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL,
+                otp TEXT NOT NULL,
+                expires_at TIMESTAMP NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_used BOOLEAN DEFAULT FALSE
+            )
+        ''')
+        
+        # Add data_consent column to existing candidates table if it doesn't exist
+        try:
+            cursor.execute('ALTER TABLE candidates ADD COLUMN data_consent BOOLEAN')
+        except Exception:
+            # Column already exists, ignore
+            pass
+        
+        # Set existing users' data_consent to NULL only if they haven't made a choice yet
+        try:
+            # Only set to NULL if the column was just added (all values are 1 from DEFAULT TRUE)
+            cursor.execute('SELECT COUNT(*) FROM candidates WHERE data_consent IS NOT NULL')
+            count = cursor.fetchone()[0]
+            if count > 0:
+                # Check if all non-null values are 1 (from old DEFAULT TRUE)
+                cursor.execute('SELECT COUNT(*) FROM candidates WHERE data_consent = 1')
+                true_count = cursor.fetchone()[0]
+                if true_count == count:
+                    # All values are 1, reset to NULL
+                    cursor.execute('UPDATE candidates SET data_consent = NULL WHERE data_consent = 1')
+        except Exception:
+            # Ignore if column doesn't exist yet
+            pass
         
         # Create internships table
         cursor.execute('''
@@ -159,6 +195,7 @@ class Database:
                     phone TEXT,
                     linkedin TEXT,
                     github TEXT,
+                    data_consent BOOLEAN,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
@@ -230,7 +267,7 @@ class Database:
         return created
     
     def seed_internships(self, json_path: str = "data/internships.json"):
-        """Seed internships from JSON file - clears and reseeds to prevent duplicates"""
+        """Seed internships from JSON file - prevents duplicates while preserving existing data"""
         import time
         attempts = 3
         while attempts > 0:
@@ -245,20 +282,32 @@ class Database:
                 cursor.execute('SELECT COUNT(*) FROM internships')
                 count_before = cursor.fetchone()[0]
 
-                # CRITICAL: Clear existing internships to prevent duplicates
-                cursor.execute('DELETE FROM internships')
-                logger.info(f"Cleared {count_before} existing internships to prevent duplicates")
+                # Remove duplicates first to ensure data integrity
+                self.remove_duplicate_internships()
 
-                # Insert fresh data
+                # Insert fresh data with duplicate prevention
                 for internship in internships:
+                    # Check if internship already exists (by title + company + location + description)
                     cursor.execute('''
-                        INSERT INTO internships 
-                        (title, company, location, description, required_skills, 
-                         preferred_skills, duration, stipend, min_education, experience_required)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        SELECT id FROM internships 
+                        WHERE title = ? AND company = ? AND location = ? AND description = ?
                     ''', (
                         internship.get('title'),
                         internship.get('company'),
+                        internship.get('location'),
+                        internship.get('description')
+                    ))
+                    
+                    if cursor.fetchone() is None:
+                        # Only insert if it doesn't exist
+                        cursor.execute('''
+                            INSERT INTO internships 
+                            (title, company, location, description, required_skills, 
+                             preferred_skills, duration, stipend, min_education, experience_required)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (
+                            internship.get('title'),
+                            internship.get('company'),
                         internship.get('location'),
                         internship.get('description'),
                         internship.get('required_skills'),
@@ -349,7 +398,7 @@ class Database:
         if row:
             columns = ['id', 'email', 'password_hash', 'name', 'education', 
                       'skills', 'location', 'experience_years', 'phone', 
-                      'linkedin', 'github', 'created_at', 'updated_at']
+                      'linkedin', 'github', 'created_at', 'updated_at', 'data_consent']
             return dict(zip(columns, row))
         return None
     
@@ -362,7 +411,7 @@ class Database:
         update_fields = []
         values = []
         for key, value in update_data.items():
-            if key not in ['id', 'email', 'password_hash', 'created_at']:
+            if key not in ['id', 'created_at']:
                 update_fields.append(f"{key} = ?")
                 values.append(value)
         
@@ -374,8 +423,6 @@ class Database:
         query = f"UPDATE candidates SET {', '.join(update_fields)}, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
         
         try:
-            logger.info(f"Executing query: {query}")
-            logger.info(f"With values: {values}")
             cursor.execute(query, values)
             conn.commit()
             conn.close()
@@ -1254,9 +1301,106 @@ class Database:
             logger.error(f"Error seeding candidates: {e}")
             return False
 
+    def store_otp(self, email: str, otp: str, expires_at: str) -> bool:
+        """Store OTP for password reset"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Invalidate any existing OTPs for this email
+            cursor.execute('''
+                UPDATE password_reset_otps 
+                SET is_used = TRUE 
+                WHERE email = ? AND is_used = FALSE
+            ''', (email,))
+            
+            # Store new OTP
+            cursor.execute('''
+                INSERT INTO password_reset_otps (email, otp, expires_at)
+                VALUES (?, ?, ?)
+            ''', (email, otp, expires_at))
+            
+            conn.commit()
+            conn.close()
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error storing OTP: {e}")
+            return False
+
+    def verify_otp(self, email: str, otp: str) -> bool:
+        """Verify OTP for password reset (without marking as used)"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Check for valid, unused OTP
+            cursor.execute('''
+                SELECT id FROM password_reset_otps 
+                WHERE email = ? AND otp = ? AND is_used = FALSE 
+                AND expires_at > datetime('now')
+                ORDER BY created_at DESC
+                LIMIT 1
+            ''', (email, otp))
+            
+            result = cursor.fetchone()
+            conn.close()
+            
+            return result is not None
+            
+        except Exception as e:
+            logger.error(f"Error verifying OTP: {e}")
+            return False
+
+    def mark_otp_used(self, email: str, otp: str) -> bool:
+        """Mark OTP as used"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                UPDATE password_reset_otps 
+                SET is_used = TRUE 
+                WHERE email = ? AND otp = ? AND is_used = FALSE
+            ''', (email, otp))
+            
+            conn.commit()
+            conn.close()
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error marking OTP as used: {e}")
+            return False
+
+    def cleanup_expired_otps(self) -> int:
+        """Clean up expired OTPs"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                DELETE FROM password_reset_otps 
+                WHERE expires_at < datetime('now') OR is_used = TRUE
+            ''')
+            
+            deleted_count = cursor.rowcount
+            conn.commit()
+            conn.close()
+            
+            if deleted_count > 0:
+                logger.info(f"Cleaned up {deleted_count} expired OTPs")
+            
+            return deleted_count
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up OTPs: {e}")
+            return 0
+
 # Initialize database on module import
 if __name__ == "__main__":
-    db = Database()
+    import os
+    db_path = os.path.join(os.path.dirname(__file__), "recommendation_engine.db")
+    db = Database(db_path)
     
     # Ensure all tables exist
     missing = db.ensure_all_tables()

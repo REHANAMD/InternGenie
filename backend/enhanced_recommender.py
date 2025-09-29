@@ -2,6 +2,7 @@
 Enhanced Recommender Module - Integrates ML pipeline with original recommender
 """
 import logging
+import os
 from typing import List, Dict, Tuple, Optional
 from database import Database
 from recommender import RecommendationEngine
@@ -14,7 +15,12 @@ logger = logging.getLogger(__name__)
 class EnhancedRecommendationEngine:
     def __init__(self, db: Database = None):
         """Initialize enhanced recommendation engine with ML capabilities"""
-        self.db = db or Database()
+        if db is None:
+            # Use backend database path if no database provided
+            db_path = os.path.join(os.path.dirname(__file__), "recommendation_engine.db")
+            self.db = Database(db_path)
+        else:
+            self.db = db
         self.original_engine = RecommendationEngine(self.db)
         self.ml_pipeline = MLPipeline(self.db)
         
@@ -366,8 +372,10 @@ class EnhancedRecommendationEngine:
 # Testing
 if __name__ == "__main__":
     from database import Database
+    import os
     
-    db = Database()
+    db_path = os.path.join(os.path.dirname(__file__), "recommendation_engine.db")
+    db = Database(db_path)
     enhanced_engine = EnhancedRecommendationEngine(db)
     
     # Test recommendations

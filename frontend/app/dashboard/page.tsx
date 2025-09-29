@@ -201,6 +201,11 @@ export default function DashboardPage() {
 
     // Handle page focus (when user returns from applications page)
     const handlePageFocus = () => {
+      // Only refresh if user has already loaded recommendations at least once
+      if (!hasLoadedOnce) {
+        return
+      }
+      
       // Check if we need to refresh recommendations
       const lastRefresh = sessionStorage.getItem('lastRecommendationRefresh')
       const now = Date.now()
@@ -221,7 +226,7 @@ export default function DashboardPage() {
       window.removeEventListener('applicationWithdrawn', handleApplicationWithdrawnEvent)
       window.removeEventListener('focus', handlePageFocus)
     }
-  }, [])
+  }, [hasLoadedOnce])
 
   const fetchRecommendations = async (useCache = true) => {
     if (!user || !authenticated) {

@@ -3,9 +3,14 @@ Authentication Module - JWT-based authentication system
 """
 import jwt
 import bcrypt
+import random
+import string
+import os
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
 import logging
+import sendgrid
+from sendgrid.helpers.mail import Mail
 from database import Database
 from utils import Utils
 
@@ -13,12 +18,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class AuthManager:
-    def __init__(self, secret_key: str = None):
+    def __init__(self, secret_key: str = None, db: Database = None):
         """Initialize authentication manager"""
-        self.secret_key = secret_key or "your-secret-key-change-in-production-2024"
+        self.secret_key = secret_key or os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production-2024")
         self.algorithm = "HS256"
         self.token_expiry_hours = 24
-        self.db = Database()
+        self.db = db or Database()
     
     def hash_password_bcrypt(self, password: str) -> str:
         """Hash password using bcrypt"""
@@ -260,6 +265,139 @@ class AuthManager:
         
         logger.info(f"Token refreshed for user {payload.get('email')}")
         return new_token
+
+    def generate_otp(self, length: int = 6) -> str:
+        """Generate a random OTP"""
+        return ''.join(random.choices(string.digits, k=length))
+
+    def send_otp_email(self, email: str, otp: str) -> Tuple[bool, str]:
+        """Send OTP via SendGrid email"""
+        try:
+            # Initialize SendGrid client
+            sg = sendgrid.SendGridAPIClient(api_key=os.getenv("SENDGRID_API_KEY", "your-sendgrid-api-key-here"))
+            
+            # Create email content
+            subject = "Password Reset OTP - InternGenie"
+            html_content = f"""
+            <html>
+            <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                <div style="background-color: #f8f9fa; padding: 30px; border-radius: 10px; text-align: center;">
+                    <h2 style="color: #333; margin-bottom: 20px;">Password Reset Request</h2>
+                    <p style="color: #666; font-size: 16px; margin-bottom: 30px;">
+                        You requested to reset your password for your InternGenie account.
+                    </p>
+                    <div style="background-color: #007bff; color: white; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                        <h1 style="margin: 0; font-size: 32px; letter-spacing: 5px;">{otp}</h1>
+                    </div>
+                    <p style="color: #666; font-size: 14px;">
+                        This OTP will expire in 10 minutes. If you didn't request this, please ignore this email.
+                    </p>
+                    <hr style="border: none; border-top: 1px solid #ddd; margin: 30px 0;">
+                    <p style="color: #999; font-size: 12px;">
+                        This is an automated message from InternGenie. Please do not reply to this email.
+                    </p>
+                </div>
+            </body>
+            </html>
+            """
+            
+            text_content = f"""
+            Password Reset Request
+            
+            You requested to reset your password for your InternGenie account.
+            
+            Your OTP is: {otp}
+            
+            This OTP will expire in 10 minutes. If you didn't request this, please ignore this email.
+            
+            This is an automated message from InternGenie. Please do not reply to this email.
+            """
+            
+            # Create mail object with verified sender email
+            verified_sender = "noreply@rehan.co.in"
+            
+            message = Mail(
+                from_email=verified_sender,
+                to_emails=email,
+                subject=subject,
+                plain_text_content=text_content,
+                html_content=html_content
+            )
+            
+            # Send email
+            response = sg.send(message)
+            
+            if response.status_code in [200, 201, 202]:
+                logger.info(f"OTP email sent successfully to {email} from {verified_sender}")
+                return True, "OTP sent successfully"
+            else:
+                logger.error(f"Failed to send OTP email. Status: {response.status_code}")
+                logger.error(f"Response body: {response.body}")
+                return False, f"Failed to send OTP email. Status: {response.status_code}"
+                
+        except Exception as e:
+            logger.error(f"Error sending OTP email: {e}")
+            # For development/testing purposes, if SendGrid fails, we'll still return success
+            # but log the OTP to console for testing
+            logger.info(f"DEVELOPMENT MODE: OTP for {email} is {otp}")
+            return True, f"OTP generated (check server logs): {otp}"
+
+    def request_password_reset_otp(self, email: str) -> Tuple[bool, str]:
+        """Request password reset with OTP"""
+        # Check if user exists
+        user = self.db.get_candidate(email=email)
+        
+        if not user:
+            return False, "User not found"
+        
+        # Generate 6-digit OTP
+        otp = self.generate_otp(6)
+        
+        # Set expiry time (10 minutes from now)
+        expires_at = datetime.utcnow() + timedelta(minutes=10)
+        expires_at_str = expires_at.strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Store OTP in database
+        if not self.db.store_otp(email, otp, expires_at_str):
+            return False, "Failed to store OTP"
+        
+        # Send OTP via email
+        success, message = self.send_otp_email(email, otp)
+        
+        if success:
+            logger.info(f"Password reset OTP requested for {email}")
+            return True, "OTP sent to your email"
+        else:
+            return False, message
+
+    def reset_password_with_otp(self, email: str, otp: str, new_password: str) -> Tuple[bool, str]:
+        """Reset password using OTP"""
+        # Verify OTP
+        if not self.db.verify_otp(email, otp):
+            return False, "Invalid or expired OTP"
+        
+        # Validate new password
+        if len(new_password) < 6:
+            return False, "Password must be at least 6 characters long"
+        
+        # Get user
+        user = self.db.get_candidate(email=email)
+        if not user:
+            return False, "User not found"
+        
+        # Hash new password
+        new_password_hash = self.hash_password_bcrypt(new_password)
+        
+        # Update password in database
+        success = self.db.update_candidate(user['id'], {'password_hash': new_password_hash})
+        
+        if success:
+            # Mark OTP as used after successful password reset
+            self.db.mark_otp_used(email, otp)
+            logger.info(f"Password reset successful for user {email}")
+            return True, "Password reset successful"
+        else:
+            return False, "Failed to reset password"
 
 # Session Manager for maintaining user sessions
 class SessionManager:

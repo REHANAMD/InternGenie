@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button, Input, LoadingSpinner } from '@/components/ui'
-import { Recommendation } from '@/lib/api'
+import { Recommendation, api } from '@/lib/api'
 import { 
   X, 
   Send, 
@@ -11,7 +11,10 @@ import {
   Bot, 
   User,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  ThumbsUp,
+  ThumbsDown,
+  RotateCcw,
 } from 'lucide-react'
 
 interface DoubtsChatbotProps {
@@ -25,6 +28,11 @@ interface Message {
   type: 'user' | 'bot'
   content: string
   isTyping?: boolean
+  intent?: string
+  confidence?: number
+  isIntelligent?: boolean
+  feedback?: 'thumbs_up' | 'thumbs_down' | null
+  canRegenerate?: boolean
 }
 
 const getSuggestedQuestions = (recommendation: Recommendation) => {
@@ -54,7 +62,12 @@ const getSuggestedQuestions = (recommendation: Recommendation) => {
   // Add application-related questions
   contextualQuestions.push("How do I apply?")
   
-  return [...baseQuestions, ...contextualQuestions].slice(0, 6)
+  // Add profile-related questions
+  contextualQuestions.push("What are my skills?")
+  contextualQuestions.push("How much experience do I have?")
+  contextualQuestions.push("Am I qualified for this role?")
+  
+  return [...baseQuestions, ...contextualQuestions].slice(0, 8)
 }
 
 export default function DoubtsChatbot({ isOpen, onClose, recommendation }: DoubtsChatbotProps) {
@@ -62,6 +75,8 @@ export default function DoubtsChatbot({ isOpen, onClose, recommendation }: Doubt
   const [inputValue, setInputValue] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [isExpanded, setIsExpanded] = useState(false)
+  const [sessionId] = useState(() => `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`)
+  const [isRegenerating, setIsRegenerating] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const scrollToBottom = () => {
@@ -83,19 +98,96 @@ export default function DoubtsChatbot({ isOpen, onClose, recommendation }: Doubt
     }
   }, [isOpen, recommendation])
 
-  const generateAIResponse = async (question: string): Promise<string> => {
-    if (!recommendation) return "Sorry, I don't have information about this internship."
+  const generateAIResponse = async (question: string): Promise<{ response: string; intent: string; confidence: number; isIntelligent: boolean }> => {
+    if (!recommendation) {
+      return {
+        response: "Sorry, I don't have information about this internship.",
+        intent: "error",
+        confidence: 0,
+        isIntelligent: false
+      }
+    }
 
-    // Simulate AI processing delay
-    await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000))
+    try {
+      // Try to use the intelligent chatbot first
+      const intelligentResponse = await api.chatWithBot(question, recommendation.internship_id || 0)
+      
+      // Format the response with context
+      const formattedResponse = formatIntelligentResponse(intelligentResponse.response, recommendation)
+      
+      return {
+        response: formattedResponse,
+        intent: intelligentResponse.intent,
+        confidence: intelligentResponse.confidence,
+        isIntelligent: true
+      }
+    } catch (error) {
+      console.warn('Intelligent chatbot failed, falling back to rule-based:', error)
+      
+      // Fallback to rule-based responses
+      const fallbackResponse = generateFallbackResponse(question, recommendation)
+      return {
+        response: fallbackResponse,
+        intent: 'fallback',
+        confidence: 0.5,
+        isIntelligent: false
+      }
+    }
+  }
 
+  const formatIntelligentResponse = (response: string, recommendation: Recommendation): string => {
+    // Replace placeholders with actual data
+    let formatted = response
+      .replace('{location}', recommendation.location || 'Not specified')
+      .replace('{required_skills}', recommendation.required_skills || 'Not specified')
+      .replace('{preferred_skills}', recommendation.preferred_skills || 'None specified')
+      .replace('{stipend}', recommendation.stipend || 'Not specified')
+      .replace('{duration}', recommendation.duration || 'Not specified')
+      .replace('{company}', recommendation.company || 'Not specified')
+      .replace('{title}', recommendation.title || 'Not specified')
+      .replace('{description}', recommendation.description || 'Not specified')
+      .replace('{match_percentage}', Math.round((recommendation.score || 0) * 100).toString())
+      .replace('{user_skills}', 'Your skills from profile')
+      .replace('{user_experience}', 'Your experience from profile')
+      .replace('{user_location}', 'Your location from profile')
+      .replace('{user_education}', 'Your education from profile')
+    
+    // Add contextual information
+    const matchPercentage = Math.round((recommendation.score || 0) * 100)
+    const skillGaps = recommendation.skill_gaps || []
+    
+    // Enhance with contextual details
+    if (response.includes('location') && recommendation.location) {
+      const locationDetails = recommendation.location.includes('Remote') 
+        ? 'This is a remote position, so you can work from anywhere!' 
+        : `You'll be working from the ${recommendation.location} office.`
+      formatted += `\n\n📍 ${locationDetails}`
+    }
+    
+    if (response.includes('skills') && skillGaps.length > 0) {
+      formatted += `\n\n📚 Skill Gaps: Focus on developing these skills: ${skillGaps.slice(0, 3).join(', ')}`
+    }
+    
+    // Remove markdown formatting
+    formatted = formatted
+      .replace(/\*\*(.*?)\*\*/g, '$1') // Remove bold
+      .replace(/\*(.*?)\*/g, '$1')     // Remove italic
+      .replace(/`(.*?)`/g, '$1')       // Remove code
+      .replace(/#{1,6}\s*/g, '')       // Remove headers
+      .replace(/\n\s*\n/g, '\n')       // Remove extra newlines
+      .trim()
+    
+    return formatted
+  }
+
+  const generateFallbackResponse = (question: string, recommendation: Recommendation): string => {
     const questionLower = question.toLowerCase()
     const matchPercentage = Math.round((recommendation.score || 0) * 100)
     const skillGaps = recommendation.skill_gaps || []
     
     // Enhanced keyword detection with better mapping
     if (questionLower.includes('location') || questionLower.includes('where') || questionLower.includes('place')) {
-      return `📍 **Location**: This ${recommendation.title} position is located in **${recommendation.location}**. ${recommendation.location.includes('Remote') ? 'This is a remote position, so you can work from anywhere!' : `You'll be working from the ${recommendation.location} office.`}`
+      return `📍 **Location**: This ${recommendation.title} position is located in **${recommendation.location}**. ${recommendation.location?.includes('Remote') ? 'This is a remote position, so you can work from anywhere!' : `You'll be working from the ${recommendation.location} office.`}`
     }
     
     if (questionLower.includes('skill') && (questionLower.includes('required') || questionLower.includes('need'))) {
@@ -103,11 +195,11 @@ export default function DoubtsChatbot({ isOpen, onClose, recommendation }: Doubt
     }
     
     if (questionLower.includes('stipend') || questionLower.includes('salary') || questionLower.includes('pay') || questionLower.includes('money')) {
-      return `💰 **Stipend**: This internship offers **${recommendation.stipend}** for the ${recommendation.duration} duration. ${recommendation.stipend.includes('Unpaid') ? 'While unpaid, this internship offers valuable experience and learning opportunities.' : 'This is a paid internship with competitive compensation.'}`
+      return `💰 **Stipend**: This internship offers **${recommendation.stipend}** for the ${recommendation.duration} duration. ${recommendation.stipend?.includes('Unpaid') ? 'While unpaid, this internship offers valuable experience and learning opportunities.' : 'This is a paid internship with competitive compensation.'}`
     }
     
     if (questionLower.includes('duration') || questionLower.includes('time') || questionLower.includes('long') || questionLower.includes('period')) {
-      return `⏰ **Duration**: This internship runs for **${recommendation.duration}**. ${recommendation.duration.includes('month') ? 'This gives you enough time to make a meaningful impact and learn valuable skills.' : 'Perfect for gaining hands-on experience in a short timeframe.'}`
+      return `⏰ **Duration**: This internship runs for **${recommendation.duration}**. ${recommendation.duration?.includes('month') ? 'This gives you enough time to make a meaningful impact and learn valuable skills.' : 'Perfect for gaining hands-on experience in a short timeframe.'}`
     }
     
     if (questionLower.includes('perfect match') || questionLower.includes('am i') || questionLower.includes('fit')) {
@@ -126,7 +218,7 @@ export default function DoubtsChatbot({ isOpen, onClose, recommendation }: Doubt
     }
     
     if (questionLower.includes('culture') || questionLower.includes('work') || questionLower.includes('environment')) {
-      return `🏢 **Work Environment**: This ${recommendation.duration} internship at ${recommendation.company} offers hands-on experience in **${recommendation.title}**. The role involves: ${recommendation.description.substring(0, 150)}... This is a great opportunity to learn and grow professionally.`
+      return `🏢 **Work Environment**: This ${recommendation.duration} internship at ${recommendation.company} offers hands-on experience in **${recommendation.title}**. The role involves: ${recommendation.description?.substring(0, 150)}... This is a great opportunity to learn and grow professionally.`
     }
     
     if (questionLower.includes('improve') || questionLower.includes('chance') || questionLower.includes('better')) {
@@ -191,9 +283,13 @@ export default function DoubtsChatbot({ isOpen, onClose, recommendation }: Doubt
       // Generate AI response
       const response = await generateAIResponse(content)
       
-      // Add bot message with typing effect
+      // Add bot message with typing effect and metadata
       const botMessage = addMessage('', 'bot', true)
-      await typewriterEffect(botMessage, response)
+      botMessage.intent = response.intent
+      botMessage.confidence = response.confidence
+      botMessage.isIntelligent = response.isIntelligent
+      
+      await typewriterEffect(botMessage, response.response)
     } catch (error) {
       console.error('Error generating response:', error)
       addMessage('Sorry, I encountered an error. Please try again.', 'bot')
@@ -211,6 +307,111 @@ export default function DoubtsChatbot({ isOpen, onClose, recommendation }: Doubt
     handleSendMessage(inputValue)
   }
 
+  const handleFeedback = async (messageId: string, feedback: 'thumbs_up' | 'thumbs_down') => {
+    const message = messages.find(m => m.id === messageId)
+    if (!message || !recommendation) {
+      console.error('Message or recommendation not found')
+      return
+    }
+
+    console.log('Submitting feedback:', { messageId, feedback, sessionId })
+
+    try {
+      const result = await api.submitFeedback(
+        sessionId,
+        recommendation.internship_id || 0,
+        messages[messages.indexOf(message) - 1]?.content || '',
+        message.content,
+        feedback
+      )
+
+      console.log('Feedback submitted successfully:', result)
+
+      // Update message with feedback
+      setMessages(prev => 
+        prev.map(msg => 
+          msg.id === messageId 
+            ? { ...msg, feedback, canRegenerate: feedback === 'thumbs_down' }
+            : msg
+        )
+      )
+    } catch (error) {
+      console.error('Error submitting feedback:', error)
+      // Still update the UI even if API fails
+      setMessages(prev => 
+        prev.map(msg => 
+          msg.id === messageId 
+            ? { ...msg, feedback, canRegenerate: feedback === 'thumbs_down' }
+            : msg
+        )
+      )
+    }
+  }
+
+  const handleRegenerate = async (messageId: string) => {
+    const message = messages.find(m => m.id === messageId)
+    if (!message || !recommendation) {
+      console.error('Message or recommendation not found for regeneration')
+      return
+    }
+
+    const questionMessage = messages[messages.indexOf(message) - 1]
+    if (!questionMessage) {
+      console.error('Question message not found for regeneration')
+      return
+    }
+
+    console.log('Regenerating response for:', questionMessage.content)
+    setIsRegenerating(true)
+    
+    try {
+      const newResponse = await api.regenerateResponse(
+        questionMessage.content,
+        recommendation.internship_id || 0
+      )
+
+      console.log('New response generated:', newResponse)
+
+      // Replace the message with new response
+      setMessages(prev => 
+        prev.map(msg => 
+          msg.id === messageId 
+            ? { 
+                ...msg, 
+                content: newResponse.response,
+                intent: newResponse.intent,
+                confidence: newResponse.confidence,
+                feedback: null,
+                canRegenerate: true
+              }
+            : msg
+        )
+      )
+    } catch (error) {
+      console.error('Error regenerating response:', error)
+      // Show error message to user
+      setMessages(prev => 
+        prev.map(msg => 
+          msg.id === messageId 
+            ? { 
+                ...msg, 
+                content: 'Sorry, I had trouble regenerating that response. Please try again.',
+                feedback: null,
+                canRegenerate: true
+              }
+            : msg
+        )
+      )
+    } finally {
+      setIsRegenerating(false)
+    }
+  }
+
+  const handleClose = () => {
+    onClose()
+  }
+
+
   if (!isOpen || !recommendation) return null
 
   return (
@@ -224,14 +425,15 @@ export default function DoubtsChatbot({ isOpen, onClose, recommendation }: Doubt
       >
         <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-96 max-h-[600px] flex flex-col">
           {/* Header */}
-          <div className="flex items-center justify-between p-4 border-b border-gray-200 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-t-2xl">
-            <div className="flex items-center space-x-2">
-              <Bot className="h-5 w-5" />
-              <div>
-                <h3 className="font-semibold">Ask Doubts</h3>
-                <p className="text-xs opacity-90">{recommendation.title}</p>
-              </div>
+        <div className="flex items-center justify-between p-4 border-b border-gray-200 bg-gradient-to-r from-purple-500 to-blue-600 text-white rounded-t-2xl">
+          <div className="flex items-center space-x-2">
+            <div>
+              <h3 className="font-semibold">
+                AI Assistant
+              </h3>
+              <p className="text-xs opacity-90">{recommendation.title}</p>
             </div>
+          </div>
             <div className="flex items-center space-x-2">
               <button
                 onClick={() => setIsExpanded(!isExpanded)}
@@ -240,7 +442,7 @@ export default function DoubtsChatbot({ isOpen, onClose, recommendation }: Doubt
                 {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
               </button>
               <button
-                onClick={onClose}
+                onClick={handleClose}
                 className="p-1 hover:bg-white/20 rounded"
               >
                 <X className="h-4 w-4" />
@@ -264,18 +466,67 @@ export default function DoubtsChatbot({ isOpen, onClose, recommendation }: Doubt
                 >
                   <div className="flex items-start space-x-2">
                     {message.type === 'bot' && (
-                      <Bot className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                      <div className="flex items-center space-x-1">
+                        <Bot className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                      </div>
                     )}
                     {message.type === 'user' && (
                       <User className="h-4 w-4 mt-0.5 flex-shrink-0" />
                     )}
                     <div className="flex-1">
-                      <p className="text-sm">{message.content}</p>
+                      <div className="flex items-center space-x-2 mb-1">
+                        <p className="text-sm">{message.content}</p>
+                        {message.type === 'bot' && message.intent && (
+                          <span className="text-xs bg-gray-200 text-gray-600 px-2 py-1 rounded-full">
+                            {message.intent.replace('_', ' ')}
+                            {message.confidence && ` (${Math.round(message.confidence * 100)}%)`}
+                          </span>
+                        )}
+                      </div>
                       {message.isTyping && (
                         <div className="flex space-x-1 mt-1">
                           <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce" />
                           <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
                           <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
+                        </div>
+                      )}
+                      
+                      {/* Feedback buttons for bot messages */}
+                      {message.type === 'bot' && !message.isTyping && (
+                        <div className="flex items-center space-x-2 mt-2">
+                          <div className="flex items-center space-x-1">
+                            <button
+                              onClick={() => handleFeedback(message.id, 'thumbs_up')}
+                              className={`p-1 rounded-full transition-colors ${
+                                message.feedback === 'thumbs_up' 
+                                  ? 'bg-green-100 text-green-600' 
+                                  : 'hover:bg-gray-100 text-gray-400 hover:text-green-600'
+                              }`}
+                            >
+                              <ThumbsUp className="h-4 w-4" />
+                            </button>
+                            <button
+                              onClick={() => handleFeedback(message.id, 'thumbs_down')}
+                              className={`p-1 rounded-full transition-colors ${
+                                message.feedback === 'thumbs_down' 
+                                  ? 'bg-red-100 text-red-600' 
+                                  : 'hover:bg-gray-100 text-gray-400 hover:text-red-600'
+                              }`}
+                            >
+                              <ThumbsDown className="h-4 w-4" />
+                            </button>
+                          </div>
+                          
+                          {/* Regenerate button for thumbs down */}
+                          {message.canRegenerate && (
+                            <button
+                              onClick={() => handleRegenerate(message.id)}
+                              disabled={isRegenerating}
+                              className="p-1 rounded-full hover:bg-gray-100 text-gray-400 hover:text-blue-600 transition-colors disabled:opacity-50"
+                            >
+                              <RotateCcw className={`h-4 w-4 ${isRegenerating ? 'animate-spin' : ''}`} />
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
@@ -330,6 +581,7 @@ export default function DoubtsChatbot({ isOpen, onClose, recommendation }: Doubt
           </form>
         </div>
       </motion.div>
+
     </AnimatePresence>
   )
 }

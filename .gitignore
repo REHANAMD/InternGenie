@@ -1,5 +1,4 @@
-# Documentation files (in-house only)
-*.md
+# Documentation files (in-house only) - but keep README.md
 *.html
 *.pdf
 
@@ -50,6 +49,8 @@ ml_evaluation_results.json
 # Logs
 *.log
 logs/
+logs.txt
+.session_counter
 
 # Environment variables
 .env
@@ -57,6 +58,11 @@ logs/
 .env.development.local
 .env.test.local
 .env.production.local
+
+# API Keys and Secrets
+*api*key*
+*secret*
+*password*
 
 # IDE
 .vscode/
@@ -105,3 +111,17 @@ backup_*
 # Sample data
 sample_data/
 test_data/
+
+# Rust build artifacts
+backend/rust-api/target/
+backend/rust-api/Cargo.lock
+
+# Shell scripts (temporary)
+start.sh
+stop.sh
+status.sh
+logs.sh
+export_logs.py
+
+# Process management
+*.pid

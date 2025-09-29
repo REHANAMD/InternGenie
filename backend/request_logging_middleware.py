@@ -4,15 +4,15 @@ Automatically logs all HTTP requests with detailed information
 """
 import time
 import json
+import logging
 from typing import Callable
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
-from session_logger import get_session_logger
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     def __init__(self, app):
         super().__init__(app)
-        self.logger = get_session_logger()
+        self.logger = logging.getLogger(__name__)
     
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # Record start time
@@ -47,17 +47,17 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 response_size = len(response.body) if response.body else 0
             
             # Log successful request
-            self.logger.log_request(
-                method=method,
-                path=path,
-                client_ip=client_ip,
-                user_agent=user_agent,
-                user_id=user_id,
-                status_code=response.status_code,
-                response_time=response_time,
-                request_size=request_size if request_size > 0 else None,
-                response_size=response_size if response_size > 0 else None
-            )
+            log_entry = f"[REQUEST] {method} {path} | IP: {client_ip} | Status: {response.status_code} | Response Time: {response_time:.3f}s"
+            if user_id:
+                log_entry += f" | User: {user_id}"
+            if request_size > 0:
+                log_entry += f" | Request Size: {request_size} bytes"
+            if response_size > 0:
+                log_entry += f" | Response Size: {response_size} bytes"
+            if user_agent:
+                log_entry += f" | User-Agent: {user_agent[:100]}..."
+            
+            self.logger.info(log_entry)
             
             return response
             
@@ -66,18 +66,15 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             response_time = time.time() - start_time
             
             # Log error
-            self.logger.log_error(
-                error_type="RequestProcessingError",
-                error_message=str(e),
-                context={
-                    "method": method,
-                    "path": path,
-                    "client_ip": client_ip,
-                    "user_agent": user_agent,
-                    "user_id": user_id,
-                    "response_time": response_time
-                }
-            )
+            error_context = {
+                "method": method,
+                "path": path,
+                "client_ip": client_ip,
+                "user_agent": user_agent,
+                "user_id": user_id,
+                "response_time": response_time
+            }
+            self.logger.error(f"[ERROR] RequestProcessingError | Message: {str(e)} | Context: {json.dumps(error_context, indent=2)}")
             
             # Re-raise the exception
             raise

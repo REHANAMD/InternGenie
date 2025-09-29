@@ -14,7 +14,9 @@ def test_ml_pipeline():
     logger.info("Testing ML Pipeline...")
     
     # Initialize components
-    db = Database()
+    import os
+    db_path = os.path.join(os.path.dirname(__file__), "recommendation_engine.db")
+    db = Database(db_path)
     enhanced_engine = EnhancedRecommendationEngine(db)
     
     # Generate sample data if needed
