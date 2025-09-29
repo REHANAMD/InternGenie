@@ -57,16 +57,65 @@ cd InternGenie
 
 ### 2. Environment Setup
 
-Create a `.env.local` file in the root directory:
+Create a `.env` file in the root directory (copy from `env.example`):
+```bash
+# Copy the example file
+cp env.example .env
+
+# Edit the .env file with your actual values
+nano .env
+```
+
+#### Required Environment Variables
+
+**Create your `.env` file with the following configuration:**
+
 ```bash
 # JWT Secret (change in production)
-JWT_SECRET_KEY=your-secret-key-change-in-production-2024
+JWT_SECRET_KEY=your-secret-key-change-in-production-2025
 
 # SendGrid API Key (for email functionality)
-SENDGRID_API_KEY=your-sendgrid-api-key-here
+SENDGRID_API_KEY=SG.your-actual-sendgrid-api-key-here
 
 # Database
-DATABASE_URL=sqlite:///./recommendation_engine.db
+DATABASE_URL=sqlite:///./backend/recommendation_engine.db
+```
+
+#### 📧 SendGrid Email Configuration (IMPORTANT)
+
+For the forgot password and OTP functionality to work properly, you need to:
+
+1. **Sign up for SendGrid**:
+   - Go to [SendGrid](https://sendgrid.com/)
+   - Create a free account
+   - Verify your account
+
+2. **Generate API Key**:
+   - Go to Settings → API Keys
+   - Create a new API key with "Full Access" permissions
+   - Copy the API key (starts with `SG.`)
+
+3. **Verify Sender Email**:
+   - Go to Settings → Sender Authentication
+   - Add and verify your sender email address (e.g., `noreply@yourdomain.com`)
+   - **Important**: The email must be verified in SendGrid
+
+4. **Update Code** (if using different email):
+   - The system is configured to send emails from `noreply@rehan.co.in`
+   - If you want to use a different email, update it in `backend/auth.py` line 317:
+     ```python
+     verified_sender = "your-verified-email@yourdomain.com"
+     ```
+
+5. **Test Email Functionality**:
+   ```bash
+   # Test SendGrid integration
+   python3 test_sendgrid.py
+   ```
+
+**Quick Setup**: Use the provided script to load environment variables:
+```bash
+source load_env.sh
 ```
 
 ### 3. Backend Setup
@@ -156,10 +205,54 @@ python train_ml_models.py
 ```
 
 ### Email Configuration
-For password reset functionality, configure SendGrid:
-1. Sign up at [SendGrid](https://sendgrid.com/)
-2. Generate an API key
-3. Add it to your `.env.local` file
+For password reset and OTP functionality, configure SendGrid:
+
+#### Step-by-Step Setup:
+
+1. **Create SendGrid Account**:
+   - Visit [SendGrid](https://sendgrid.com/)
+   - Sign up for a free account
+   - Complete email verification
+
+2. **Generate API Key**:
+   - Navigate to Settings → API Keys
+   - Click "Create API Key"
+   - Choose "Full Access" permissions
+   - Copy the generated key (format: `SG.xxxxxxxxxxxxxxxxx`)
+
+3. **Verify Sender Email**:
+   - Go to Settings → Sender Authentication
+   - Click "Verify a Single Sender"
+   - Add your email address (e.g., `noreply@yourdomain.com`)
+   - Check your email and click the verification link
+   - **Critical**: This step is required for emails to be sent
+
+4. **Configure Environment**:
+   - Add your API key to `.env` file:
+     ```bash
+     SENDGRID_API_KEY=SG.your-actual-api-key-here
+     ```
+
+5. **Update Sender Email** (if needed):
+   - The system uses `noreply@rehan.co.in` by default
+   - To change it, edit `backend/auth.py` line 317:
+     ```python
+     verified_sender = "your-verified-email@yourdomain.com"
+     ```
+
+6. **Test Configuration**:
+   ```bash
+   # Test SendGrid integration
+   python3 test_sendgrid.py
+   
+   # Test OTP functionality
+   # (Use the forgot password feature in the app)
+   ```
+
+#### Troubleshooting Email Issues:
+- **403 Forbidden Error**: Sender email not verified in SendGrid
+- **401 Unauthorized**: Invalid API key
+- **Emails not received**: Check spam folder, verify sender email
 
 ## 📊 API Documentation
 
@@ -215,7 +308,7 @@ cd rust-api
 ```bash
 JWT_SECRET_KEY=your-production-secret-key
 SENDGRID_API_KEY=your-production-sendgrid-key
-DATABASE_URL=your-production-database-url
+DATABASE_URL=sqlite:///./backend/recommendation_engine.db
 ```
 
 ## 📁 Project Structure
