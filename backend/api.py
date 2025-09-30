@@ -73,12 +73,12 @@ recommender = RecommendationEngine(db)
 enhanced_engine = EnhancedRecommendationEngine(db)
 auth_manager = AuthManager(db=db)  # Pass database instance directly
 
-# Initialize simple chatbot
-from simple_chatbot import SimpleChatbot
-chatbot_service = SimpleChatbot()
+# Initialize intelligent chatbot
+from intelligent_chatbot import IntelligentChatbotService
+chatbot_service = IntelligentChatbotService()
 
-# Simple chatbot initialized
-logger.info("Simple chatbot initialized successfully")
+# Intelligent chatbot initialized
+logger.info("Intelligent chatbot initialized successfully")
 
 # Log component initialization
 logger.info("Components Initialized - Database, Parser, Recommender, Auth Manager, Chatbot loaded")
@@ -2619,6 +2619,18 @@ class ChatbotResponse(BaseModel):
     intent: str
     confidence: float
     attention_weights: Optional[List[List[float]]] = None
+    isRegenerated: Optional[bool] = None
+
+class ChatbotFeedbackRequest(BaseModel):
+    question: str
+    response: str
+    intent: str
+    feedback: str  # 'thumbs_up' or 'thumbs_down'
+    internship_id: int
+
+class RegenerateRequest(BaseModel):
+    question: str
+    internship_id: int
 
 @app.post("/chatbot/test", response_model=ChatbotResponse)
 async def test_chatbot(
@@ -2643,7 +2655,8 @@ async def test_chatbot(
         response = chatbot_service.generate_response(
             question=request.question,
             user_data=user_data,
-            internship_data=internship_data
+            internship_data=internship_data,
+            db=db
         )
         
         return ChatbotResponse(
@@ -2665,7 +2678,7 @@ async def chat_with_bot(
     """Chat with the intelligent chatbot about a specific internship"""
     try:
         # Get user data
-        user_data = db.get_candidate(current_user['id'])
+        user_data = db.get_candidate(candidate_id=current_user['id'])
         logger.info(f"User data for ID {current_user['id']}: {user_data}")
         if not user_data:
             raise HTTPException(status_code=404, detail="User not found")
@@ -2681,7 +2694,8 @@ async def chat_with_bot(
         response = chatbot_service.generate_response(
             question=request.question,
             user_data=user_data,
-            internship_data=internship_data
+            internship_data=internship_data,
+            db=db
         )
         logger.info(f"Generated response: {response}")
         
@@ -2695,6 +2709,82 @@ async def chat_with_bot(
     except Exception as e:
         logger.error(f"Error in chatbot chat: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate chatbot response")
+
+@app.post("/chatbot/feedback")
+async def submit_chatbot_feedback(
+    request: ChatbotFeedbackRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Submit feedback for chatbot responses"""
+    try:
+        # Get user data
+        user_data = db.get_candidate(candidate_id=current_user['id'])
+        if not user_data:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Get internship data
+        internship_data = db.get_internship(request.internship_id)
+        if not internship_data:
+            raise HTTPException(status_code=404, detail="Internship not found")
+        
+        # Record feedback
+        success = chatbot_service.record_feedback(
+            question=request.question,
+            response=request.response,
+            intent=request.intent,
+            feedback=request.feedback,
+            user_data=user_data,
+            internship_data=internship_data
+        )
+        
+        if success:
+            logger.info(f"Feedback recorded: {request.feedback} for question: {request.question}")
+            return {"success": True, "message": "Feedback recorded successfully"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to record feedback")
+            
+    except Exception as e:
+        logger.error(f"Error in chatbot feedback: {e}")
+        raise HTTPException(status_code=500, detail="Failed to record feedback")
+
+@app.post("/chatbot/regenerate", response_model=ChatbotResponse)
+async def regenerate_chatbot_response(
+    request: RegenerateRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Regenerate chatbot response with improved politeness"""
+    try:
+        # Get user data
+        user_data = db.get_candidate(candidate_id=current_user['id'])
+        if not user_data:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Get internship data
+        internship_data = db.get_internship(request.internship_id)
+        if not internship_data:
+            raise HTTPException(status_code=404, detail="Internship not found")
+        
+        # Generate regenerated response
+        response = chatbot_service.regenerate_response(
+            question=request.question,
+            user_data=user_data,
+            internship_data=internship_data,
+            db=db
+        )
+        
+        logger.info(f"Regenerated response for question: {request.question}")
+        
+        return ChatbotResponse(
+            response=response['response'],
+            intent=response['intent'],
+            confidence=response['confidence'],
+            attention_weights=response.get('attention_weights'),
+            isRegenerated=response.get('isRegenerated', True)
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in chatbot regenerate: {e}")
+        raise HTTPException(status_code=500, detail="Failed to regenerate response")
 
 if __name__ == "__main__":
     import uvicorn

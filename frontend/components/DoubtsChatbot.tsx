@@ -35,6 +35,15 @@ interface Message {
   canRegenerate?: boolean
 }
 
+const renderMarkdown = (text: string) => {
+  return text.split(/(\*\*.*?\*\*)/).map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>
+    }
+    return part
+  })
+}
+
 const getSuggestedQuestions = (recommendation: Recommendation) => {
   const matchPercentage = Math.round((recommendation.score || 0) * 100)
   
@@ -317,12 +326,18 @@ export default function DoubtsChatbot({ isOpen, onClose, recommendation }: Doubt
     console.log('Submitting feedback:', { messageId, feedback, sessionId })
 
     try {
+      const questionMessage = messages[messages.indexOf(message) - 1]
+      if (!questionMessage) {
+        console.error('Question message not found')
+        return
+      }
+
       const result = await api.submitFeedback(
-        sessionId,
-        recommendation.internship_id || 0,
-        messages[messages.indexOf(message) - 1]?.content || '',
+        questionMessage.content,
         message.content,
-        feedback
+        message.intent || 'unknown',
+        feedback,
+        recommendation.internship_id || 0
       )
 
       console.log('Feedback submitted successfully:', result)
@@ -382,7 +397,8 @@ export default function DoubtsChatbot({ isOpen, onClose, recommendation }: Doubt
                 intent: newResponse.intent,
                 confidence: newResponse.confidence,
                 feedback: null,
-                canRegenerate: true
+                canRegenerate: true,
+                isRegenerated: newResponse.isRegenerated
               }
             : msg
         )
@@ -475,7 +491,9 @@ export default function DoubtsChatbot({ isOpen, onClose, recommendation }: Doubt
                     )}
                     <div className="flex-1">
                       <div className="flex items-center space-x-2 mb-1">
-                        <p className="text-sm">{message.content}</p>
+                        <div className="text-sm">
+                          {renderMarkdown(message.content)}
+                        </div>
                         {message.type === 'bot' && message.intent && (
                           <span className="text-xs bg-gray-200 text-gray-600 px-2 py-1 rounded-full">
                             {message.intent.replace('_', ' ')}

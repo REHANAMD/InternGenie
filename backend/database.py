@@ -1033,6 +1033,42 @@ class Database:
         conn.close()
         
         return count > 0
+    
+    def get_saved_internships_count(self, candidate_id: int) -> int:
+        """Get count of saved internships for a candidate"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT COUNT(*) FROM saved_internships 
+            WHERE candidate_id = ?
+        ''', (candidate_id,))
+        
+        count = cursor.fetchone()[0]
+        conn.close()
+        
+        return count
+    
+    def get_user_applications(self, candidate_id: int) -> List[Dict]:
+        """Get all applications for a candidate"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT a.*, i.title, i.company, i.location
+            FROM applications a
+            JOIN internships i ON a.internship_id = i.id
+            WHERE a.candidate_id = ?
+            ORDER BY a.applied_at DESC
+        ''', (candidate_id,))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        columns = ['id', 'candidate_id', 'internship_id', 'applied_at', 'status', 
+                  'cover_letter', 'resume_path', 'title', 'company', 'location']
+        
+        return [dict(zip(columns, row)) for row in rows]
 
     def remove_duplicate_internships(self) -> int:
         """Remove duplicate internships by title+company+location+description, keeping the first occurrence. Returns number removed."""

@@ -83,21 +83,27 @@ export default function DashboardPage() {
     }
 
     initializeApp()
+  }, [authenticated, router])
 
-    // Show welcome notification only once
-    const hasShownWelcome = sessionStorage.getItem('hasShownWelcome')
-    if (!hasShownWelcome) {
-      setTimeout(() => {
-        addNotification({
-          type: 'success',
-          title: 'Welcome to InternGenie!',
-          message: 'Discover your perfect internship matches with AI-powered recommendations.',
-          duration: 4000
-        })
-        sessionStorage.setItem('hasShownWelcome', 'true')
-      }, 1000)
+  // Show welcome notification only once - separate effect to avoid dependency issues
+  useEffect(() => {
+    if (authenticated) {
+      const hasShownWelcome = sessionStorage.getItem('hasShownWelcome')
+      if (!hasShownWelcome) {
+        const timer = setTimeout(() => {
+          addNotification({
+            type: 'success',
+            title: 'Welcome to InternGenie!',
+            message: 'Discover your perfect internship matches with AI-powered recommendations.',
+            duration: 4000
+          })
+          sessionStorage.setItem('hasShownWelcome', 'true')
+        }, 1000)
+        
+        return () => clearTimeout(timer)
+      }
     }
-  }, [authenticated, router, addNotification])
+  }, [authenticated]) // Remove addNotification from dependencies
 
   // Initialize state from localStorage on mount
   useEffect(() => {

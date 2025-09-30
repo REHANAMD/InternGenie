@@ -46,6 +46,9 @@ models/
 *.pickle
 ml_evaluation_results.json
 
+# Chatbot feedback data (contains user data)
+chatbot_feedback.json
+
 # Logs
 *.log
 logs/

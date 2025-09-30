@@ -352,7 +352,7 @@ def train_chatbot():
         
         # Save the trained model
         model_path = "intelligent_chatbot_model.pth"
-        chatbot.save_model(model_path)
+        chatbot._save_model()
         
         logger.info(f"Chatbot training completed successfully!")
         logger.info(f"Model saved to: {model_path}")

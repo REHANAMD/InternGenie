@@ -8,6 +8,7 @@ import { authAPI } from '@/lib/api'
 import { setAuth } from '@/lib/auth'
 import PasswordInput from './PasswordInput'
 import ForgotPasswordModal from './ForgotPasswordModal'
+import TermsOfUsageModal from './TermsOfUsageModal'
 
 interface LoginFormProps {
   onSwitchToSignup: () => void
@@ -17,6 +18,9 @@ export default function LoginForm({ onSwitchToSignup }: LoginFormProps) {
   const router = useRouter()
   const [isLoading, setIsLoading] = useState(false)
   const [showForgotPassword, setShowForgotPassword] = useState(false)
+  const [showTermsModal, setShowTermsModal] = useState(false)
+  const [termsAccepted, setTermsAccepted] = useState(false)
+  const [showTermsError, setShowTermsError] = useState(false)
   const [formData, setFormData] = useState({
     email: '',
     password: ''
@@ -27,6 +31,11 @@ export default function LoginForm({ onSwitchToSignup }: LoginFormProps) {
     
     if (!formData.email || !formData.password) {
       toast.error('Please fill in all fields')
+      return
+    }
+
+    if (!termsAccepted) {
+      setShowTermsError(true)
       return
     }
 
@@ -60,6 +69,13 @@ export default function LoginForm({ onSwitchToSignup }: LoginFormProps) {
       ...prev,
       [e.target.name]: e.target.value
     }))
+  }
+
+  const handleTermsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setTermsAccepted(e.target.checked)
+    if (e.target.checked && showTermsError) {
+      setShowTermsError(false)
+    }
   }
 
   return (
@@ -106,10 +122,40 @@ export default function LoginForm({ onSwitchToSignup }: LoginFormProps) {
           </button>
         </div>
 
+        {/* Terms of Usage Checkbox */}
+        <div>
+          {showTermsError && (
+            <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-md">
+              <p className="text-sm text-red-600">
+                Please accept the terms of usage and data sharing to continue with login.
+              </p>
+            </div>
+          )}
+          <div className="flex items-start">
+            <input
+              type="checkbox"
+              id="termsAccepted"
+              checked={termsAccepted}
+              onChange={handleTermsChange}
+              className="mt-1 mr-3 text-blue-600 focus:ring-blue-500 rounded"
+            />
+            <label htmlFor="termsAccepted" className="text-sm text-gray-600">
+              I confirm I have read the{' '}
+              <button
+                type="button"
+                onClick={() => setShowTermsModal(true)}
+                className="text-blue-600 hover:text-blue-700 font-medium underline"
+              >
+                terms of usage and data sharing
+              </button>
+            </label>
+          </div>
+        </div>
+
         <Button 
           type="submit" 
           className="w-full bg-blue-600 hover:bg-blue-700"
-          disabled={isLoading}
+          disabled={isLoading || !termsAccepted}
         >
           {isLoading ? (
             <div className="flex items-center">
@@ -138,6 +184,12 @@ export default function LoginForm({ onSwitchToSignup }: LoginFormProps) {
       <ForgotPasswordModal
         isOpen={showForgotPassword}
         onClose={() => setShowForgotPassword(false)}
+      />
+
+      {/* Terms of Usage Modal */}
+      <TermsOfUsageModal
+        isOpen={showTermsModal}
+        onClose={() => setShowTermsModal(false)}
       />
     </div>
   )

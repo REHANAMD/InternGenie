@@ -447,16 +447,16 @@ export const api = {
   },
 
   // Feedback and session management
-  submitFeedback: async (sessionId: string, internshipId: number, question: string, response: string, feedback: 'thumbs_up' | 'thumbs_down'): Promise<{
+  submitFeedback: async (question: string, response: string, intent: string, feedback: 'thumbs_up' | 'thumbs_down', internshipId: number): Promise<{
+    success: boolean;
     message: string;
-    retrained: boolean;
   }> => {
     const apiResponse = await apiClient.post('/chatbot/feedback', {
-      session_id: sessionId,
-      internship_id: internshipId,
       question,
       response,
-      feedback
+      intent,
+      feedback,
+      internship_id: internshipId
     });
     return apiResponse.data;
   },
@@ -466,6 +466,7 @@ export const api = {
     intent: string;
     confidence: number;
     attention_weights?: number[][];
+    isRegenerated?: boolean;
   }> => {
     const apiResponse = await apiClient.post('/chatbot/regenerate', {
       question,
